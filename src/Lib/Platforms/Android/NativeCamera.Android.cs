@@ -1142,15 +1142,15 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
     }
 
 
-    public bool ManualZoomEnabled = true;
+    //public bool ManualZoomEnabled = true;
 
-    private void OnScaleChanged(object sender, TouchEffect.WheelEventArgs e)
-    {
-        if (ManualZoomEnabled)
-        {
-            SetZoom(e.Scale);
-        }
-    }
+    //private void OnScaleChanged(object sender, TouchEffect.WheelEventArgs e)
+    //{
+    //    if (ManualZoomEnabled)
+    //    {
+    //        SetZoom(e.Scale);
+    //    }
+    //}
 
     /// <summary>
     /// Select format by quality percentile

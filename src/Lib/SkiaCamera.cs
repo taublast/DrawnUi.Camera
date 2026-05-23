@@ -1,5 +1,6 @@
 ﻿global using DrawnUi.Draw;
 global using SkiaSharp;
+global using AppoMobi.Gestures;
 using System.Buffers;
 using System.ComponentModel;
 using System.Diagnostics;

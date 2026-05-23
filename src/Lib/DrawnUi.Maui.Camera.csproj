@@ -24,7 +24,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-      <Version>1.9.8.1</Version>
+      <Version>1.10.0.1-preview1.6</Version>
       <Title>DrawnUI Camera control for .NET MAUI rendered with SkiaSharp</Title>
       <PackageId>DrawnUi.Maui.Camera</PackageId>
       <Description>SkiaCamera control rendered with SkiaSharp and DrawnUI for .NET MAUI on Android, iOS, MacCatalyst and Windows</Description>
@@ -42,14 +42,14 @@
 
     <!-- .NET 9 MAUI packages -->
     <ItemGroup Condition="$(TargetFramework.StartsWith('net9.0'))">
-      <PackageReference Include="Microsoft.Maui.Controls" Version="9.0.70" />
-      <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="9.0.70" />
+      <PackageReference Include="Microsoft.Maui.Controls" Version="9.0.120" />
+      <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="9.0.120" />
     </ItemGroup>
 
     <!-- .NET 10 MAUI packages -->
     <ItemGroup Condition="$(TargetFramework.StartsWith('net10.0'))">
-      <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.11" />
-      <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="10.0.11" />
+      <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
+      <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="10.0.20" />
     </ItemGroup>
 
     <PropertyGroup Condition="$(TargetFramework.Contains('windows')) == true Or $(TargetFramework.Contains('droid')) == true Or $(TargetFramework.Contains('ios')) == true Or $(TargetFramework.Contains('catalyst')) == true">
@@ -114,7 +114,7 @@
     </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' != 'true'">
-      <PackageReference Include="DrawnUi.Maui" Version="1.9.7.4" />
+      <PackageReference Include="DrawnUi.Maui" Version="1.10.0.1-preview1.6" />
     </ItemGroup>
 
 </Project>

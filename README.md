@@ -28,16 +28,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ## What's New
 
-### Apple
-
-- Selfie camera captured photo now matches the preview X-mirror.
-- Preview rendering stays on GPU, no CPU readback.
-
-### Shared
-
-- Improved RenderCapturedPhotoAsync to accept same code signature already used for ProcessPreview and ProcessFrame.
-- OnRawFrameAvailable renamed to `OnRawFrameAcquired` and improved with more received data.
-- Implemented `RawCameraFrame` with methods `TryGetRgba`, `TryGetJpeg`, `TryGetPng` and more for AI/ML usage.
+ - Using new preview .NET10 DrawnUI nugets with SkiaSharp 4.x
  
 ## Extending SkiaCamera
 
@@ -386,8 +377,6 @@ Performance note:
 ## ToDo
 
 - [ ] Manual camera controls (focus, exposure, ISO, white balance)
-- [ ] Camera capability detection (zoom ranges, supported formats)
-- [ ] Preview format customization
 
 ## References
 

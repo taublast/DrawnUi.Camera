@@ -3,6 +3,9 @@
     <File Path="../../DrawnUi/src/Directory.Build.targets" />
     <File Path="../README.md" />
   </Folder>
+  <Project Path="../../DetectFaces/src/DetectFaces.csproj">
+    <Deploy Solution="Debug|*" />
+  </Project>
   <Project Path="../../DrawnUi/src/Maui/DrawnUi/DrawnUi.Maui.csproj" />
   <Project Path="../../DrawnUi/src/Shared/DrawnUi.Shared.shproj" Id="83974207-9636-48dd-bdb3-98edecbb1107" />
   <Project Path="../src/Lib/DrawnUi.Maui.Camera.csproj" />

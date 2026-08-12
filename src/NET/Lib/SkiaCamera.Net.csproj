@@ -1,0 +1,55 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <LangVersion>latest</LangVersion>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+      <UseSource>false</UseSource>
+
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <DefineConstants>$(DefineConstants);CAMERA_NET</DefineConstants>
+    </PropertyGroup>
+
+    <PropertyGroup>
+      <Version>1.10.5.6</Version>
+      <Title>SkiaCamera for .NET</Title>
+      <PackageId>DrawnUi.Net.Camera</PackageId>
+      <Description>SkiaCamera engine for .NET</Description>
+      <PackageTags>maui drawnui skia skiasharp draw camera</PackageTags>
+      <Authors>Nick Kovalsky aka AppoMobi and contributors</Authors>
+      <Copyright>(c) AppoMobi and contributors 2023 - present day</Copyright>
+      <PackageProjectUrl>https://github.com/taublast/DrawnUi.Camera</PackageProjectUrl>
+      <RepositoryUrl>https://github.com/taublast/DrawnUi.Camera</RepositoryUrl>
+      <PackageLicenseExpression>MIT</PackageLicenseExpression>
+      <CreatePackage>false</CreatePackage>
+      <GenerateDocumentationFile>true</GenerateDocumentationFile>
+      <IncludeSymbols>true</IncludeSymbols>
+      <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+        <NoWarn>1701;1702;XLS0505</NoWarn>
+        <WarningsAsErrors>$(WarningsAsErrors);CS0108;XLS0501</WarningsAsErrors>
+    </PropertyGroup>
+
+    <ItemGroup Condition=" '$(Configuration)'=='Release' ">
+        <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+    </ItemGroup>
+ 
+    <ItemGroup Condition="'$(UseSource)' == 'true'">
+      <ProjectReference Include="..\..\..\..\DrawnUi\src\Net\DrawnUi\DrawnUi.Net.csproj" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(UseSource)' != 'true'">
+      <PackageReference Include="DrawnUi.Net" Version="1.10.5.6" />
+    </ItemGroup>
+
+    <Import Project="..\..\Shared\Lib\DrawnUi.Camera.Shared.projitems" Label="Shared" />
+
+</Project>

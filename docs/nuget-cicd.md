@@ -20,11 +20,11 @@ Both publish jobs depend only on the pack job, so they run independently based o
 
 The workflow packs this project:
 
-- `src/Lib/DrawnUi.Maui.Camera.csproj`
+- `src/MAUI/Lib/DrawnUi.Maui.Camera.csproj`
 
 Package version is taken from project metadata:
 
-- `<Version>` in `src/Lib/DrawnUi.Maui.Camera.csproj`
+- `<Version>` in `src/MAUI/Lib/DrawnUi.Maui.Camera.csproj`
 
 ## Produced Artifacts
 

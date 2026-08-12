@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+
+    <!-- Visualizer sources are plain classes (SkiaSharp + DrawnUi.Camera.AudioSample only,
+         no DrawnUi.Draw/SkiaLayout coupling), so they're testable headless without the
+         SkiaLayout-based AudioVisualizer wrapper or any Canvas/host. -->
+    <ItemGroup>
+        <Compile Include="..\..\..\MAUI\Sample\UI\Visualizers\IAudioVisualizer.cs" Link="Visualizers\IAudioVisualizer.cs" />
+        <Compile Include="..\..\..\MAUI\Sample\UI\Visualizers\AudioLevels.cs" Link="Visualizers\AudioLevels.cs" />
+        <Compile Include="..\..\..\MAUI\Sample\UI\Visualizers\AudioLevelsPeak.cs" Link="Visualizers\AudioLevelsPeak.cs" />
+        <Compile Include="..\..\..\MAUI\Sample\UI\Visualizers\AudioLevelsVU.cs" Link="Visualizers\AudioLevelsVU.cs" />
+        <Compile Include="..\..\..\MAUI\Sample\UI\Visualizers\AudioOscillograph.cs" Link="Visualizers\AudioOscillograph.cs" />
+        <Compile Include="..\..\..\MAUI\Sample\UI\Visualizers\AudioRadialGauge.cs" Link="Visualizers\AudioRadialGauge.cs" />
+        <Compile Include="..\..\..\MAUI\Sample\UI\Visualizers\AudioSoundBars.cs" Link="Visualizers\AudioSoundBars.cs" />
+        <Compile Include="..\..\..\MAUI\Sample\UI\Visualizers\AudioWaveformBars.cs" Link="Visualizers\AudioWaveformBars.cs" />
+    </ItemGroup>
+
+    <!-- Reuse the MAUI sample's exact shader effect list + .sksl files, so the headless harness
+         proves the SAME filters apply through the SAME override point (RenderPreviewForProcessing). -->
+    <ItemGroup>
+        <Compile Include="..\..\..\MAUI\Sample\UI\Shaders\ShaderEffect.cs" Link="Shaders\ShaderEffect.cs" />
+        <Compile Include="..\..\..\MAUI\Sample\UI\Shaders\ShaderEffectHelper.cs" Link="Shaders\ShaderEffectHelper.cs" />
+        <Content Include="..\..\..\MAUI\Sample\Resources\Raw\Shaders\*.sksl" Link="Shaders\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+    <ItemGroup>
+      <ProjectReference Include="..\..\Lib\SkiaCamera.Net.csproj" />
+    </ItemGroup>
+
+</Project>

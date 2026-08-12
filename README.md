@@ -6,6 +6,7 @@ Use as Camera or a standalone Audio recorder inside any MAUI app by wrapping wit
 ## Features
 
 - Cross-platform (Android, iOS, MacCatalyst, Windows) with hardware-accelerated SkiaSharp rendering
+- Separate additional package for pure .NET harness
 - Real-time preview effects (Sepia, B&W, Pastel) and custom SKSL shaders
 - Photo capture with post-processing and metadata
 - Video recording with real-time frame processing — overlays/effects baked in without post-processing
@@ -28,7 +29,8 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ## What's New
 
- - Using new preview .NET10 DrawnUI nugets with SkiaSharp 4.x
+- Using new .NET10 DrawnUI nugets with SkiaSharp 4
+- SkiaCamera.Net for tests and AI-harness 
  
 ## Extending SkiaCamera
 
@@ -67,7 +69,7 @@ public void InvalidateGpuResources()
 The default implementation is a no-op — only override when your native camera holds resources bound to the SkiaSharp GRContext.
 ## Sample Apps
 
-- [SkiaCamera Demo](https://github.com/taublast/DrawnUi.Maui.Camera/tree/main/src/Sample) - This repo: recording with processing, shaders, AI captions.
+- [SkiaCamera Demo](https://github.com/taublast/DrawnUi.Maui.Camera/tree/main/src/MAUI/Sample) - This repo: recording with processing, shaders, AI captions.
 - [Filters Camera](https://github.com/taublast/ShadersCamera) - Still photo-camera with realtime SKSL shaders as photo-filters.
 - [SolTempo](https://github.com/taublast/SolTempo) - Audio visualizer and BPM detector using SkiaCamera's audio monitoring capabilities.
 

@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/Solution Items/">
     <File Path="../README.md" />
+    <Project Path="MAUI/Lib/DrawnUi.Maui.Camera.csproj" />
+    <Project Path="NET/Lib/SkiaCamera.Net.csproj" />
+    <Project Path="Shared/Lib/DrawnUi.Camera.Shared.shproj" Id="9ddd906b-34ab-495e-9606-681783720bbe" />
   </Folder>
-  <Project Path="Lib/DrawnUi.Maui.Camera.csproj" />
 </Solution>

@@ -32,7 +32,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Samples", "Samples", "{3161
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DetectFaces", "..\..\DetectFaces\src\DetectFaces.csproj", "{D9F01037-7CC3-E3B4-10BE-E13FC87A89E2}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DrawnUi.Maui.Camera", "..\src\Lib\DrawnUi.Maui.Camera.csproj", "{55C0443E-7D39-6D43-1799-BA3C2E677F10}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DrawnUi.Maui.Camera", "..\src\MAUI\Lib\DrawnUi.Maui.Camera.csproj", "{55C0443E-7D39-6D43-1799-BA3C2E677F10}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -73,9 +73,10 @@ Global
 		SolutionGuid = {329E3D0C-A3F7-4A3E-B61C-6B2D1BD7F708}
 	EndGlobalSection
 	GlobalSection(SharedMSBuildProjectFiles) = preSolution
-		..\..\DrawnUi\src\Shared\Shared.projitems*{51f7ec60-4642-3a6f-6c99-f6f62233c374}*SharedItemsImports = 5
+		..\..\DrawnUi\src\Shared\DrawnUi\Shared.projitems*{51f7ec60-4642-3a6f-6c99-f6f62233c374}*SharedItemsImports = 5
+		..\src\Shared\Lib\DrawnUi.Camera.Shared.projitems*{55c0443e-7d39-6d43-1799-ba3c2e677f10}*SharedItemsImports = 5
 		..\..\DrawnUi\src\Shared\Shared.projitems*{83974207-9636-48dd-bdb3-98edecbb1107}*SharedItemsImports = 13
-		..\..\DrawnUi\src\Shared\Shared.projitems*{93e119b1-4378-87df-2dd2-a818d1e6c2a2}*SharedItemsImports = 5
+		..\..\DrawnUi\src\Shared\DrawnUi\Shared.projitems*{93e119b1-4378-87df-2dd2-a818d1e6c2a2}*SharedItemsImports = 5
 		..\..\DrawnUi\src\SharedNet\SharedNet.projitems*{c4d8f2a1-7b3e-4f9c-a8d6-5e1b9f2c8d3a}*SharedItemsImports = 13
 		..\..\DrawnUi\src\SharedGame\SharedGame.projitems*{f1532dec-e3ee-4616-8f16-b594c891fcc3}*SharedItemsImports = 13
 	EndGlobalSection

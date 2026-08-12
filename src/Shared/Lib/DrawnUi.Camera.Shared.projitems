@@ -1,0 +1,63 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <MSBuildAllProjects Condition="'$(MSBuildVersion)' == '' Or '$(MSBuildVersion)' &lt; '16.0'">$(MSBuildAllProjects);$(MSBuildThisFileFullPath)</MSBuildAllProjects>
+    <HasSharedItems>true</HasSharedItems>
+    <SharedGUID>9ddd906b-34ab-495e-9606-681783720bbe</SharedGUID>
+  </PropertyGroup>
+  <PropertyGroup Label="Configuration">
+    <Import_RootNamespace>DrawnUi.Camera.Shared</Import_RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)GlobalUsings.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CameraAudioMode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CameraEffect.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CameraPickerMode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CameraPosition.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CameraProcessorState.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CameraType.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CaptureFlashMode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CaptureLocationType.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CaptureModeType.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\CaptureQuality.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\FlashMode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\HardwareState.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\MeteringMode.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\StretchModes.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Enums\VideoQuality.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Interfaces\IAudioCapture.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Interfaces\IAudioOnlyEncoder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Interfaces\ICameraViewRenderer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Interfaces\INativeCamera.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Interfaces\IVideoDecoder.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Helpers\AudioSampleConverter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Helpers\Calculate.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Helpers\JpegExifInjector.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Helpers\Mp4LocationInjector.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Helpers\Mp4MetadataInjector.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\AudioBitDepth.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\AudioSample.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\BrightnessResult.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CameraExposureBaseline.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CameraInfo.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CameraManualExposureRange.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CameraUnit.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CaptureFormat.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CapturedAudio.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CapturedImage.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CapturedVideo.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CircularAudioBuffer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\CircularEncodedAudioBuffer.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\ExposureResult.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\FrameInfo.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Metadata.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\OutputOrientation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\RawCameraFrame.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\VideoFormat.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Controls\CameraOverlayContent.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Controls\CameraOverlayLayout.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SkiaCamera.Shared.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SkiaCamera.RawFrame.Shared.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SkiaCamera.Processing.Shared.cs" />
+  </ItemGroup>
+</Project>

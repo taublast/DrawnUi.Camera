@@ -46,7 +46,7 @@ jobs:
         shell: pwsh
         run: |
           $projects = @(
-            'src/Lib/DrawnUi.Maui.Camera.csproj'
+            'src/MAUI/Lib/DrawnUi.Maui.Camera.csproj'
           )
 
           foreach ($project in $projects) {

@@ -17,7 +17,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-      <Version>1.10.5.6</Version>
+      <Version>1.10.5.10</Version>
       <Title>SkiaCamera for .NET</Title>
       <PackageId>DrawnUi.Net.Camera</PackageId>
       <Description>SkiaCamera engine for .NET</Description>
@@ -47,7 +47,7 @@
     </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' != 'true'">
-      <PackageReference Include="DrawnUi.Net" Version="1.10.5.6" />
+      <PackageReference Include="DrawnUi.Net" Version="1.10.5.10" />
     </ItemGroup>
 
     <Import Project="..\..\Shared\Lib\DrawnUi.Camera.Shared.projitems" Label="Shared" />

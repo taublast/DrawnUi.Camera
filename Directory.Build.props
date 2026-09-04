@@ -1,0 +1,14 @@
+<Project>
+
+  <PropertyGroup>
+    <!--
+      Allows Windows target frameworks in this repo to be *evaluated* on non-Windows hosts.
+      Required when these projects are referenced from an app being built on macOS/Linux:
+      MSBuild enumerates every TargetFramework of a referenced project, and hitting the
+      Windows TFM without this raises NETSDK1100. Reference-assembly resolution only -
+      nothing Windows-specific is compiled, and no other platform's output is affected.
+    -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+</Project>

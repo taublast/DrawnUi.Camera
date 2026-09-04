@@ -4131,14 +4131,23 @@ public partial class SkiaCamera : SkiaControl
             }
             finally
             {
+                // The awaits above (Permissions.RequestAsync / RequestGalleryPermissions /
+                // AVCaptureDevice.RequestAccessForMediaTypeAsync) resume on whatever thread iOS
+                // invokes their completion on. Without a captured SynchronizationContext the
+                // continuation runs off the main thread, and granted -> StartInternal -> CreateNative
+                // would then build the native camera/preview view off-thread, which on iOS can leave
+                // the preview black until the app is restarted. Force the callbacks onto the UI
+                // thread so native camera creation always happens there.
                 PermissionsGranted = allGranted;
-
-                if (allGranted)
-                    granted?.Invoke();
-                else
-                    notGranted?.Invoke();
-
                 ChecksBusy = false;
+
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    if (allGranted)
+                        granted?.Invoke();
+                    else
+                        notGranted?.Invoke();
+                });
             }
         });
 #endif

@@ -65,13 +65,32 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
             CleanupMovieFileOutput();
 
-            Stop();
-
-            _session?.Dispose();
-            _videoDataOutput?.Dispose();
-            _stillImageOutput?.Dispose();
-            _deviceInput?.Dispose();
-            _videoDataOutputQueue?.Dispose();
+            // AVFoundation teardown blocks the calling thread: Stop() joins the frame-processing
+            // thread and calls _session.StopRunning(), then the session/inputs/outputs are disposed.
+            // On page pop Dispose runs on the MAIN thread, so this froze the exit animation for a
+            // couple of seconds (a sliver of the outgoing page stuck on screen). Apple allows
+            // StopRunning/Dispose off the main queue, so offload the heavy native teardown.
+            var session = _session;
+            var videoDataOutput = _videoDataOutput;
+            var stillImageOutput = _stillImageOutput;
+            var deviceInput = _deviceInput;
+            var videoDataOutputQueue = _videoDataOutputQueue;
+            Task.Run(() =>
+            {
+                try
+                {
+                    Stop();
+                    session?.Dispose();
+                    videoDataOutput?.Dispose();
+                    stillImageOutput?.Dispose();
+                    deviceInput?.Dispose();
+                    videoDataOutputQueue?.Dispose();
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                }
+            });
 
             _kill?.Dispose();
 

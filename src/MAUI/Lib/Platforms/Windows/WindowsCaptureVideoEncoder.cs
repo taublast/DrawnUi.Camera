@@ -1,4 +1,4 @@
-using SkiaSharp;
+﻿using SkiaSharp;
 using System.Diagnostics;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -180,6 +180,13 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
     private SKSurface _gpuSurface;
     private SKImageInfo _gpuInfo;                 // Matches encoder dimensions
     private readonly object _frameLock = new();   // Protects Begin/Submit sequence
+
+    /// <summary>
+    /// Held from BeginFrame until the frame scope is disposed. Stop/Abort/Dispose take it before
+    /// releasing the GPU surface, so a frame still being drawn on the recording worker (a slow
+    /// CPU shader can take seconds) is never pulled from under sk_canvas_draw_* (0xC0000005).
+    /// </summary>
+    private readonly System.Threading.SemaphoreSlim _frameGate = new(1, 1);
     private TimeSpan _pendingTimestamp;
 
     // Native audio encoder (bypasses .NET MAUI COM restrictions)
@@ -405,6 +412,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
     /// </summary>
     public IDisposable BeginFrame(TimeSpan timestamp, out SKCanvas canvas, out SKImageInfo info)
     {
+        _frameGate.Wait();
         lock (_frameLock)
         {
             _pendingTimestamp = timestamp;
@@ -423,7 +431,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
 
             info = _gpuInfo;
 
-            return new FrameScope();
+            return new FrameScope(_frameGate);
         }
     }
 
@@ -508,7 +516,20 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         }
     }
 
-    private sealed class FrameScope : IDisposable { public void Dispose() { } }
+    private sealed class FrameScope : IDisposable
+    {
+        private System.Threading.SemaphoreSlim _gate;
+
+        public FrameScope(System.Threading.SemaphoreSlim gate)
+        {
+            _gate = gate;
+        }
+
+        public void Dispose()
+        {
+            System.Threading.Interlocked.Exchange(ref _gate, null)?.Release();
+        }
+    }
 
 
     /// <summary>
@@ -897,6 +918,19 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         Debug.WriteLine($"[WindowsCaptureVideoEncoder #{_instanceId}] AbortAsync CALLED");
 
         _isRecording = false;
+        await _frameGate.WaitAsync(); // let a frame in flight finish before the surface goes
+        try
+        {
+            await AbortCoreAsync();
+        }
+        finally
+        {
+            _frameGate.Release();
+        }
+    }
+
+    private async Task AbortCoreAsync()
+    {
         _progressTimer?.Dispose();
 
         EncodingStatus = "Canceled";
@@ -983,6 +1017,19 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         Debug.WriteLine($"[WindowsCaptureVideoEncoder #{_instanceId}] StopAsync CALLED: IsPreRecordingMode={IsPreRecordingMode}");
 
         _isRecording = false;
+        await _frameGate.WaitAsync(); // let a frame in flight finish before the surface goes
+        try
+        {
+            return await StopCoreAsync();
+        }
+        finally
+        {
+            _frameGate.Release();
+        }
+    }
+
+    private async Task<CapturedVideo> StopCoreAsync()
+    {
         _progressTimer?.Dispose();
 
         // Update status
@@ -2844,7 +2891,15 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         // Clean up pre-recording temp files
         CleanupPreRecTempFiles();
 
-        ReleaseGpuResources();
+        _frameGate.Wait();
+        try
+        {
+            ReleaseGpuResources();
+        }
+        finally
+        {
+            _frameGate.Release();
+        }
 
         if (_frames != null)
         {

@@ -572,6 +572,13 @@ public partial class SkiaCamera : SkiaControl
     }
 
     /// <summary>
+    /// True while the sensor's auto exposure is converging (Apple: KVO on
+    /// AVCaptureDevice.adjustingExposure). Notably true for up to a few seconds after a
+    /// (re)start, when frames are still black or badly exposed. Other platforms: always false.
+    /// </summary>
+    public bool IsAdjustingExposure { get; set; }
+
+    /// <summary>
     /// Gets or sets the active logical camera description used for focal-length and metadata calculations.
     /// </summary>
     public CameraUnit CameraDevice
@@ -3923,6 +3930,14 @@ public partial class SkiaCamera : SkiaControl
 
     protected static bool ChecksBusy = false;
 
+    /// <summary>
+    /// Callers that asked while a check was already in flight. They used to be dropped: a
+    /// restart landing during another restart's permission check then stopped the session and
+    /// never started it again (State stayed On, viewfinder black). Now they get the in-flight
+    /// result.
+    /// </summary>
+    private static readonly List<(Action granted, Action notGranted)> _pendingPermissionCallers = new();
+
     private static DateTime lastTimeChecked = DateTime.MinValue;
 
     [Flags]
@@ -4016,7 +4031,10 @@ public partial class SkiaCamera : SkiaControl
         MainThread.BeginInvokeOnMainThread(async () =>
         {
             if (ChecksBusy)
+            {
+                _pendingPermissionCallers.Add((granted, notGranted));
                 return;
+            }
 
             bool allGranted = true;
 
@@ -4039,7 +4057,11 @@ public partial class SkiaCamera : SkiaControl
                 if (allGranted && request.HasFlag(NeedPermissions.Gallery))
                 {
 #if IOS || MACCATALYST
-                    allGranted = await RequestGalleryPermissions();
+                    // Every OS request below is issued from the main thread on purpose: the previous
+                    // await resumes on an arbitrary thread (PHPhotoLibrary / AVCaptureDevice callbacks)
+                    // and CLLocationManager (MAUI's Location permission) created off the main thread
+                    // never shows its prompt and never completes.
+                    allGranted = await MainThread.InvokeOnMainThreadAsync(RequestGalleryPermissions);
 #elif ANDROID
                     if (Android.OS.Build.VERSION.SdkInt >= Android.OS.BuildVersionCodes.Q)
                     {
@@ -4070,7 +4092,8 @@ public partial class SkiaCamera : SkiaControl
                     if (s == AVAuthorizationStatus.NotDetermined)
                     {
                         wasAsking = true;
-                        allGranted = await AVCaptureDevice.RequestAccessForMediaTypeAsync(AVAuthorizationMediaType.Audio);
+                        allGranted = await MainThread.InvokeOnMainThreadAsync(
+                            () => AVCaptureDevice.RequestAccessForMediaTypeAsync(AVAuthorizationMediaType.Audio));
                     }
                     else
                     {
@@ -4111,7 +4134,8 @@ public partial class SkiaCamera : SkiaControl
                     var locStatus = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
                     if (locStatus != PermissionStatus.Granted)
                     {
-                        locStatus = await Permissions.RequestAsync<Permissions.LocationWhenInUse>();
+                        locStatus = await MainThread.InvokeOnMainThreadAsync(
+                            () => Permissions.RequestAsync<Permissions.LocationWhenInUse>());
                         wasAsking = true;
                     }
                     allGranted = locStatus == PermissionStatus.Granted;
@@ -4141,12 +4165,23 @@ public partial class SkiaCamera : SkiaControl
                 PermissionsGranted = allGranted;
                 ChecksBusy = false;
 
+                var pending = _pendingPermissionCallers.ToArray();
+                _pendingPermissionCallers.Clear();
+
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
                     if (allGranted)
                         granted?.Invoke();
                     else
                         notGranted?.Invoke();
+
+                    foreach (var caller in pending)
+                    {
+                        if (allGranted)
+                            caller.granted?.Invoke();
+                        else
+                            caller.notGranted?.Invoke();
+                    }
                 });
             }
         });

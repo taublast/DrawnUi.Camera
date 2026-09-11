@@ -127,6 +127,9 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     private AVCaptureAudioDataOutput _audioDataOutput;
     private AVCaptureStillImageOutput _stillImageOutput;
     private AVCaptureDeviceInput _deviceInput;
+
+    /// <summary>KVO on the active device's adjustingExposure, mirrored into FormsControl.IsAdjustingExposure.</summary>
+    private IDisposable _exposureObserver;
     private AVCaptureDeviceInput _audioInput;
     private DispatchQueue _videoDataOutputQueue;
     private DispatchQueue _audioDataOutputQueue;
@@ -743,6 +746,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 }
 
                 _deviceInput = new AVCaptureDeviceInput(videoDevice, out error);
+
+                _exposureObserver?.Dispose();
+                _exposureObserver = videoDevice.AddObserver("adjustingExposure",
+                    NSKeyValueObservingOptions.New | NSKeyValueObservingOptions.Initial,
+                    _ => { if (FormsControl != null) FormsControl.IsAdjustingExposure = videoDevice.AdjustingExposure; });
                 if (error != null)
                 {
                     Console.WriteLine($"Could not create video device input: {error.LocalizedDescription}");
@@ -905,9 +913,35 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     /// </summary>
     /// <param name="allFormats"></param>
     /// <returns></returns>
+    /// <summary>
+    /// 8-bit 4:2:0 pixel formats: '420v' (video range) and '420f' (full range).
+    /// </summary>
+    private const uint FourCC420v = 0x34323076; // '420v'
+    private const uint FourCC420f = 0x34323066; // '420f'
+
+    /// <summary>
+    /// True for an 8-bit 4:2:0 device format. Devices with 10-bit HDR sensors (iPhone 16 Pro,
+    /// 17 Pro) list every resolution several times, once per pixel format ('420v', '420f',
+    /// 'x420', 'x422'). Picking a 10-bit variant broke the first session of the process: the
+    /// camera daemon produced frames at full rate while our AVCaptureVideoDataOutput (32BGRA)
+    /// delivered none, a black viewfinder until any restart (measured 2026-09-11, iOS 26.6).
+    /// </summary>
+    private static bool IsEightBitFormat(AVCaptureDeviceFormat format)
+    {
+        var sub = (format.FormatDescription as CMVideoFormatDescription)?.MediaSubType ?? 0;
+        return sub == FourCC420v || sub == FourCC420f;
+    }
+
     public List<AVCaptureDeviceFormat> GetFilteredFormats(IEnumerable<AVCaptureDeviceFormat> allFormats)
     {
-        var availableFormats = allFormats
+        var all = allFormats.ToList();
+        var eightBit = all.Where(IsEightBitFormat).ToList();
+        if (eightBit.Count > 0)
+        {
+            all = eightBit; // 10-bit variants only when nothing else exists
+        }
+
+        var availableFormats = all
             .Where(f => f.HighResolutionStillImageDimensions.Width > 0 && f.HighResolutionStillImageDimensions.Height > 0)
             .Select(f => new
             {
@@ -997,9 +1031,9 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         var selectedDetail = quality switch
         {
             CaptureQuality.Max => formatDetails.First(),
-            CaptureQuality.High => SelectFormatByQuality(formatDetails, 0.2),
-            CaptureQuality.Medium => SelectFormatByQuality(formatDetails, 0.5),
-            CaptureQuality.Low => SelectFormatByQuality(formatDetails, 0.8),
+            CaptureQuality.High => SelectFormatByPixelBudget(formatDetails, 12.5),
+            CaptureQuality.Medium => SelectFormatByPixelBudget(formatDetails, 10.5),
+            CaptureQuality.Low => SelectFormatByPixelBudget(formatDetails, 4.0),
             CaptureQuality.Preview => SelectPreviewFormat(formatDetails),
             CaptureQuality.Manual => GetManualFormatDetail(formatDetails, FormsControl.PhotoFormatIndex),
             _ => formatDetails.First()
@@ -1016,8 +1050,46 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     /// <param name="formatDetails"></param>
     /// <param name="percentile"></param>
     /// <returns></returns>
+    /// <summary>
+    /// Largest distinct still size whose pixel count does not exceed <paramref name="megapixels"/>,
+    /// the video format for it chosen like a manual pick (closest to 720p). A budget means the
+    /// same photo size on every device that can provide it; a percentile of the format list did
+    /// not, since the list length depends on how many resolutions a sensor exposes (and 10-bit
+    /// duplicates). Falls back to the smallest still size when nothing fits the budget.
+    /// </summary>
+    private FormatDetail SelectFormatByPixelBudget(List<FormatDetail> formatDetails, double megapixels)
+    {
+        if (StillFormats == null || StillFormats.Count == 0)
+        {
+            return formatDetails.First();
+        }
+
+        var budget = megapixels * 1_000_000;
+        var stillIndex = StillFormats.Count - 1; // StillFormats is sorted largest first
+        for (int i = 0; i < StillFormats.Count; i++)
+        {
+            if ((double)StillFormats[i].Width * StillFormats[i].Height <= budget)
+            {
+                stillIndex = i;
+                break;
+            }
+        }
+
+        return GetManualFormatDetail(formatDetails, stillIndex);
+    }
+
     private FormatDetail SelectFormatByQuality(List<FormatDetail> formatDetails, double percentile)
     {
+        // The percentile walks the DISTINCT still sizes (StillFormats, largest first), then the
+        // video format for that still size is chosen like a manual pick (closest to 720p).
+        // Indexing the flat list was arbitrary: devices list one resolution several times (one
+        // entry per pixel format), so "the middle entry" landed on whatever duplicate sat there.
+        if (StillFormats != null && StillFormats.Count > 0)
+        {
+            var stillIndex = Math.Clamp((int)(StillFormats.Count * percentile), 0, StillFormats.Count - 1);
+            return GetManualFormatDetail(formatDetails, stillIndex);
+        }
+
         var index = (int)(formatDetails.Count * percentile);
         var result = formatDetails.Skip(index).FirstOrDefault();
         return result.Format != null ? result : formatDetails.First();
@@ -1326,6 +1398,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
         try
         {
+            _exposureObserver?.Dispose();
+            _exposureObserver = null;
+            if (FormsControl != null)
+                FormsControl.IsAdjustingExposure = false;
+
             _session.StopRunning();
 
             State = CameraProcessorState.None;

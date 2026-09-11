@@ -113,7 +113,7 @@
     </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' != 'true'">
-      <PackageReference Include="DrawnUi.Maui" Version="1.10.6.12" />
+      <PackageReference Include="DrawnUi.Maui" Version="1.10.6.13" />
     </ItemGroup>
 
     <Import Project="..\..\Shared\Lib\DrawnUi.Camera.Shared.projitems" Label="Shared" />

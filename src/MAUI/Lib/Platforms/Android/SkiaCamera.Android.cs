@@ -1341,6 +1341,8 @@ public partial class SkiaCamera
                 if (_audioCapture == null)
                 {
                     _audioCapture = CreateAudioCapturePlatform();
+                    _audioCapture.AudioMode = AudioMode;
+                    Debug.WriteLine($"[SkiaCamera.Android] Recording audio capture created with AudioMode={AudioMode}");
                     _audioCapture.SampleAvailable += OnAudioSampleAvailable;
                 }
 
@@ -2114,6 +2116,7 @@ public partial class SkiaCamera
                 StopPreviewAudioCapture();
 
                 _previewAudioCapture = new AudioCaptureAndroid();
+                _previewAudioCapture.AudioMode = AudioMode;
                 _previewAudioCapture.SampleAvailable += OnPreviewAudioSampleAvailable;
                 var started = await _previewAudioCapture.StartAsync(AudioSampleRate, AudioChannels, AudioBitDepth, AudioDeviceIndex);
                 if (started)
@@ -2186,6 +2189,7 @@ public partial class SkiaCamera
                 StopPreviewAudioCapture();
 
                 _audioOnlyCapture = new AudioCaptureAndroid();
+                _audioOnlyCapture.AudioMode = AudioMode;
                 _audioOnlyCapture.SampleAvailable += OnAudioOnlySampleAvailable;
                 var started = await _audioOnlyCapture.StartAsync(sampleRate, channels, AudioBitDepth, AudioDeviceIndex);
                 if (started)

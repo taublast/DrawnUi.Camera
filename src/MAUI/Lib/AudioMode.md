@@ -21,7 +21,7 @@ Add a `CameraAudioMode` property to `SkiaCamera` that controls how the audio ses
 - `Enums/CameraAudioMode.cs` — new enum
 - `Interfaces/IAudioCapture.cs` — added `CameraAudioMode AudioMode { get; set; }`
 - `Interfaces/INativeCamera.cs` — added `void SetAudioMode(CameraAudioMode mode)`
-- `SkiaCamera.cs` — added `AudioMode` bindable property (default `VideoRecording`); synced to `NativeControl` and preview audio capture instances
+- `SkiaCamera.cs` — added `AudioMode` bindable property (default `Default`); copied into each audio capture (recording, preview, audio-only) when that capture is created, on Apple and Android. A change applies to the next capture, never to a running one.
 
 ### iOS
 - `Apple/AudioCapture.Apple.cs` — reads `AudioMode` to set `AVAudioSession` mode and toggle `SetVoiceProcessingEnabled`
@@ -32,6 +32,7 @@ Add a `CameraAudioMode` property to `SkiaCamera` that controls how the audio ses
 - `Platforms/Windows/NativeCamera.Windows.cs` — `SetAudioMode` stub
 
 ### Android (implemented)
+- `Platforms/Android/SkiaCamera.Android.cs` — assigns `AudioMode` to every `AudioCaptureAndroid` it creates. Before 2026-09-12 it did not, so Android recorded with `AudioSource.Mic` whatever the property said.
 - `Platforms/Android/AudioCaptureAndroid.cs` — `AudioSource` selected based on `AudioMode`:
   - `Default` → `AudioSource.Mic`
   - `VideoRecording` → `AudioSource.Camcorder`

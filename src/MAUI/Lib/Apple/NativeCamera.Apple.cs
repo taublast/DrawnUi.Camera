@@ -4019,6 +4019,18 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 Debug.WriteLine($"[NativeCamera.Apple] Set video orientation to: {orientation} (DeviceRotation: {FormsControl.DeviceRotation})");
             }
 
+            // Same rule as the selfie still: the file is mirrored only when the app keeps the
+            // mirrored preview look (MirrorSavedSelfiePhoto=false). The output connection is
+            // unmirrored by default, so with the default preview (mirrored) the clip did not
+            // match the screen.
+            if (videoConnection != null && videoConnection.SupportsVideoMirroring)
+            {
+                var mirrorClip = !FormsControl.MirrorSavedSelfiePhoto &&
+                                 (FormsControl.CameraDevice?.Position ?? FormsControl.Facing) == CameraPosition.Selfie;
+                videoConnection.AutomaticallyAdjustsVideoMirroring = false;
+                videoConnection.VideoMirrored = mirrorClip;
+            }
+
             ApplyVideoStabilization(videoConnection, "movie");
 
             // Start recording

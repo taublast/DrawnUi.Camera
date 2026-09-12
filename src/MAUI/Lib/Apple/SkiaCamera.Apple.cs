@@ -421,6 +421,13 @@ public partial class SkiaCamera
                 bool shouldDisposeImage = true;
                 int imageRotation = 0;
                 bool imageFlip = false;
+                // Same rule as the selfie still (HandleOrientationForStillCapture): the clip is mirrored
+                // only when the app asked to keep the mirrored preview look. Before, the encoder always
+                // mirrored selfie frames and a clip shot with MirrorSavedSelfiePhoto=true came out
+                // flipped against what the screen showed.
+                bool selfieMirror = !MirrorSavedSelfiePhoto &&
+                                    (CameraDevice?.Position ?? Facing) == CameraPosition.Selfie;
+                bool unmirrorFallback = false;
 
                 // Try to get raw frame (faster)
                 if (NativeControl is NativeCamera nativeCam)
@@ -456,7 +463,7 @@ public partial class SkiaCamera
                                 imageToDraw = _cachedZeroCopyImage;
                                 shouldDisposeImage = false;
                                 imageRotation = (int)nativeCam.CurrentRotation;
-                                imageFlip = (CameraDevice?.Position ?? Facing) == CameraPosition.Selfie;
+                                imageFlip = selfieMirror;
                             }
                         }
                         catch (Exception ex)
@@ -474,7 +481,10 @@ public partial class SkiaCamera
                 if (imageToDraw == null)
                 {
                     imageToDraw = NativeControl?.GetPreviewImage();
-                    // GetPreviewImage returns already rotated image
+                    // GetPreviewImage returns already rotated image, mirrored for selfie like the
+                    // on-screen preview: flip it back when the clip must not be mirrored.
+                    unmirrorFallback = !selfieMirror &&
+                                       (CameraDevice?.Position ?? Facing) == CameraPosition.Selfie;
                 }
 
                 if (imageToDraw == null)
@@ -558,8 +568,18 @@ public partial class SkiaCamera
                         {
                             var __rectsA = GetAspectFillRects(imageToDraw.Width, imageToDraw.Height, info.Width,
                                 info.Height);
+                            if (unmirrorFallback)
+                            {
+                                canvas.Save();
+                                canvas.Translate(info.Width, 0);
+                                canvas.Scale(-1, 1);
+                            }
                             //canvas.DrawImage(imageToDraw, __rectsA.src, __rectsA.dst);
                             RenderFrameForRecording(canvas, imageToDraw, __rectsA.src, __rectsA.dst);
+                            if (unmirrorFallback)
+                            {
+                                canvas.Restore();
+                            }
                         }
 
                         if (ProcessFrame != null || VideoDiagnosticsOn)

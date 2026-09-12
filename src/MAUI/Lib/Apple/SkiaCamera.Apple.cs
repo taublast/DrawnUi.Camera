@@ -3,7 +3,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using AVFoundation;
-using AVFoundation;
+using CoreMedia;
 using AVKit;
 using CoreVideo;
 using DrawnUi.Maui.Navigation;
@@ -421,6 +421,13 @@ public partial class SkiaCamera
                 bool shouldDisposeImage = true;
                 int imageRotation = 0;
                 bool imageFlip = false;
+                // Same rule as the selfie still (HandleOrientationForStillCapture): the clip is mirrored
+                // only when the app asked to keep the mirrored preview look. Before, the encoder always
+                // mirrored selfie frames and a clip shot with MirrorSavedSelfiePhoto=true came out
+                // flipped against what the screen showed.
+                bool selfieMirror = !MirrorSavedSelfiePhoto &&
+                                    (CameraDevice?.Position ?? Facing) == CameraPosition.Selfie;
+                bool unmirrorFallback = false;
 
                 // Try to get raw frame (faster)
                 if (NativeControl is NativeCamera nativeCam)
@@ -456,7 +463,7 @@ public partial class SkiaCamera
                                 imageToDraw = _cachedZeroCopyImage;
                                 shouldDisposeImage = false;
                                 imageRotation = (int)nativeCam.CurrentRotation;
-                                imageFlip = (CameraDevice?.Position ?? Facing) == CameraPosition.Selfie;
+                                imageFlip = selfieMirror;
                             }
                         }
                         catch (Exception ex)
@@ -474,7 +481,10 @@ public partial class SkiaCamera
                 if (imageToDraw == null)
                 {
                     imageToDraw = NativeControl?.GetPreviewImage();
-                    // GetPreviewImage returns already rotated image
+                    // GetPreviewImage returns already rotated image, mirrored for selfie like the
+                    // on-screen preview: flip it back when the clip must not be mirrored.
+                    unmirrorFallback = !selfieMirror &&
+                                       (CameraDevice?.Position ?? Facing) == CameraPosition.Selfie;
                 }
 
                 if (imageToDraw == null)
@@ -558,8 +568,18 @@ public partial class SkiaCamera
                         {
                             var __rectsA = GetAspectFillRects(imageToDraw.Width, imageToDraw.Height, info.Width,
                                 info.Height);
+                            if (unmirrorFallback)
+                            {
+                                canvas.Save();
+                                canvas.Translate(info.Width, 0);
+                                canvas.Scale(-1, 1);
+                            }
                             //canvas.DrawImage(imageToDraw, __rectsA.src, __rectsA.dst);
                             RenderFrameForRecording(canvas, imageToDraw, __rectsA.src, __rectsA.dst);
+                            if (unmirrorFallback)
+                            {
+                                canvas.Restore();
+                            }
                         }
 
                         if (ProcessFrame != null || VideoDiagnosticsOn)
@@ -1097,6 +1117,10 @@ public partial class SkiaCamera
     /// Shows video directly in full-screen viewer using PHAsset and PHImageManager
     /// </summary>
     /// <param name="assetId">Local identifier of the PHAsset to display</param>
+    /// <summary>Kept alive while the OS player is up, see PlayVideoDirectly.</summary>
+    private static NSObject _playerEndObserver;
+    private static NSObject _playerTimeObserver;
+
     public static void PlayVideoDirectly(string assetId)
     {
         try
@@ -1130,13 +1154,56 @@ public partial class SkiaCamera
             {
                 if (avAsset != null)
                 {
-                    var player = AVPlayer.FromPlayerItem(new AVPlayerItem(avAsset));
+                    var item = new AVPlayerItem(avAsset);
+                    var player = AVPlayer.FromPlayerItem(item);
                     playerVC.Player = player;
+
+                    // the clip played through: close the player and hand the screen back to the
+                    // caller (a gallery), instead of leaving a stopped player with a replay button.
+                    // The observer token is held in a static field: an unreferenced token can be
+                    // collected and its handler never runs.
+                    _playerEndObserver?.Dispose();
+                    _playerEndObserver = NSNotificationCenter.DefaultCenter.AddObserver(AVPlayerItem.DidPlayToEndTimeNotification, notification =>
+                    {
+                        if (notification.Object != null && !ReferenceEquals(notification.Object, item) && notification.Object.Handle != item.Handle)
+                            return;
+
+                        Debug.WriteLine("[SkiaCamera Apple] Video played to end, closing the player");
+                        _playerEndObserver?.Dispose();
+                        _playerEndObserver = null;
+                        MainThread.BeginInvokeOnMainThread(() => playerVC.DismissViewController(true, null));
+                    });
+
+                    // belt and braces: the end notification was not delivered on iOS 26 in tests,
+                    // a periodic time observer catches the end of the item by position
+                    var closed = false;
+                    _playerTimeObserver?.Dispose();
+                    _playerTimeObserver = player.AddPeriodicTimeObserver(CMTime.FromSeconds(0.2, 600), null, time =>
+                    {
+                        var duration = item.Duration;
+                        if (closed || !duration.IsNumeric || duration.Seconds <= 0)
+                            return;
+
+                        if (time.Seconds >= duration.Seconds - 0.25)
+                        {
+                            closed = true;
+                            Debug.WriteLine($"[SkiaCamera Apple] Video reached its end ({time.Seconds:F2}/{duration.Seconds:F2}), closing the player");
+                            if (_playerTimeObserver != null)
+                            {
+                                player.RemoveTimeObserver(_playerTimeObserver);
+                                _playerTimeObserver = null;
+                            }
+                            _playerEndObserver?.Dispose();
+                            _playerEndObserver = null;
+                            MainThread.BeginInvokeOnMainThread(() => playerVC.DismissViewController(true, null));
+                        }
+                    });
 
                     MainThread.BeginInvokeOnMainThread(() =>
                     {
                         viewController.PresentViewController(playerVC, true, () =>
                         {
+                            Debug.WriteLine("[SkiaCamera Apple] Player presented, playing");
                             player.Play();
                         });
                     });

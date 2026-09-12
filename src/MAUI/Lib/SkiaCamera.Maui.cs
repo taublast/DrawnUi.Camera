@@ -1029,10 +1029,25 @@ public partial class SkiaCamera : SkiaControl
         {
             Display.Aspect = this.Aspect;
 
-            Display.ScaleX = this.MirrorPreviewX ? -1 : 1;
+            var mirrorX = this.MirrorPreviewX;
+#if IOS || MACCATALYST
+            // The raw Apple preview is mirrored at the source for the selfie camera. While the
+            // encoder frames feed the preview they carry the clip's own mirroring, which is off
+            // when MirrorSavedSelfiePhoto is true, so the display flip is inverted for that time
+            // to keep the screen identical before, during and after recording.
+            if (_previewFrameFromEncoder && MirrorSavedSelfiePhoto &&
+                (CameraDevice?.Position ?? Facing) == CameraPosition.Selfie)
+            {
+                mirrorX = !mirrorX;
+            }
+#endif
+            Display.ScaleX = mirrorX ? -1 : 1;
             Display.ScaleY = this.MirrorPreviewY ? -1 : 1;
         }
     }
+
+    /// <summary>True while the frame handed to the display comes from the recording encoder.</summary>
+    private bool _previewFrameFromEncoder;
 
     protected override void OnMeasured()
     {
@@ -3627,6 +3642,13 @@ public partial class SkiaCamera : SkiaControl
             if (image != null)
             {
                 FrameAquired = true;
+
+                var fromEncoder = UseRecordingFramesForPreview && (IsRecording || IsPreRecording);
+                if (fromEncoder != _previewFrameFromEncoder)
+                {
+                    _previewFrameFromEncoder = fromEncoder;
+                    ApplyDisplayProperties();
+                }
 
                 // Capture actual preview image dimensions for PreviewScale calculation
                 if (_actualPreviewWidth != image.Width)

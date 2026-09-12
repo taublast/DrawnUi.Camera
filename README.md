@@ -381,6 +381,7 @@ Performance note:
 ## ToDo
 
 - [ ] Manual camera controls (focus, exposure, ISO, white balance)
+- [ ] Android: selfie video mirroring should follow `MirrorSavedSelfiePhoto` like the still (`flipSelfie` in `NativeCamera.Android.cs`) and like Apple does since 1.10.6.15. The Android recording paths (GPU processing in `SkiaCamera.Android.cs`, native MediaRecorder) never mirror front-camera frames, so with `MirrorSavedSelfiePhoto=false` and a mirrored preview (`MirrorPreviewX`) the saved clip does not match the screen.
 
 ## References
 

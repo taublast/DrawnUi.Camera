@@ -27,8 +27,9 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.6.13
+## What's New  1.10.6.14
 
+ * iOS: `PlayVideoDirectly` closes the OS player when the clip has played through and hands the screen back to the caller (a gallery). Detected by playback position, since `AVPlayerItemDidPlayToEndTime` was not delivered on iOS 26 in tests.
  * iOS: only 8-bit `420v`/`420f` device formats are used for the video data output. 10-bit HDR formats (`x420`/`x422`, iPhone 16 Pro / 17 Pro) gave a black viewfinder on the first session of the process. Quality now selects by a megapixel budget over distinct still sizes instead of a list percentile.
  * iOS: permission checks arriving while another is in flight are queued instead of dropped (a restart could otherwise stop the session and never start it); OS prompts run on the main thread.
  * iOS: `IsAdjustingExposure` (KVO on the device) tells when the auto exposure settled after a start.

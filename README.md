@@ -27,6 +27,10 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
+## What's New  1.10.6.141
+
+ * iOS: selfie video mirroring follows `MirrorSavedSelfiePhoto` like the still. The encoder always mirrored front-camera frames, so with `MirrorSavedSelfiePhoto=true` a clip came out flipped against the screen. Applies to the GPU processing path (`CaptureFrameCore`, zero-copy and CPU fallback) and to the native `AVCaptureMovieFileOutput` connection (`VideoMirrored`). While encoder frames feed the preview the display flip is inverted for that time, so the screen looks the same before, during and after recording.
+
 ## What's New  1.10.6.14
 
  * iOS: `PlayVideoDirectly` closes the OS player when the clip has played through and hands the screen back to the caller (a gallery). Detected by playback position, since `AVPlayerItemDidPlayToEndTime` was not delivered on iOS 26 in tests.
@@ -381,7 +385,7 @@ Performance note:
 ## ToDo
 
 - [ ] Manual camera controls (focus, exposure, ISO, white balance)
-- [ ] Android: selfie video mirroring should follow `MirrorSavedSelfiePhoto` like the still (`flipSelfie` in `NativeCamera.Android.cs`) and like Apple does since 1.10.6.15. The Android recording paths (GPU processing in `SkiaCamera.Android.cs`, native MediaRecorder) never mirror front-camera frames, so with `MirrorSavedSelfiePhoto=false` and a mirrored preview (`MirrorPreviewX`) the saved clip does not match the screen.
+- [ ] Android: selfie video mirroring should follow `MirrorSavedSelfiePhoto` like the still (`flipSelfie` in `NativeCamera.Android.cs`) and like Apple does since 1.10.6.141. The Android recording paths (GPU processing in `SkiaCamera.Android.cs`, native MediaRecorder) never mirror front-camera frames, so with `MirrorSavedSelfiePhoto=false` and a mirrored preview (`MirrorPreviewX`) the saved clip does not match the screen.
 
 ## References
 

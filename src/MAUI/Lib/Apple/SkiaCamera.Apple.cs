@@ -3891,48 +3891,118 @@ public partial class SkiaCamera
         OnPreviewAudioSampleAvailable(sample);
     }
 
+    /// <summary>
+    /// Bumped by every start request and every stop. A start still in flight compares its token
+    /// and gives up when it is stale, so a stop arriving mid-start (record tapped right after a
+    /// capture mode switch) is never undone by that start finishing later.
+    /// </summary>
+    private int _previewAudioToken;
+
     partial void StartPreviewAudioCapture()
     {
         // Start audio capture if either recording audio or audio monitoring is enabled
         if (_previewAudioCapture != null || (!EnableAudioRecording && !EnableAudioMonitoring))
             return;
 
+        var token = System.Threading.Interlocked.Increment(ref _previewAudioToken);
+
         Task.Run(async () =>
         {
-            if (!await _audioSemaphore.WaitAsync(1)) // Skip if busy processing
+            var semaphore = _audioSemaphore;
+            if (semaphore == null)
                 return;
 
             try
             {
-                StopPreviewAudioCapture();
+                // Queue behind a start in flight: that one is stale now and exits quickly.
+                await semaphore.WaitAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+                return;
+            }
 
-                _previewAudioCapture = new AudioCaptureApple();
-                _previewAudioCapture.AudioMode = AudioMode;
-                _previewAudioCapture.SampleAvailable += OnPreviewAudioSampleAvailable;
-                var started = await _previewAudioCapture.StartAsync(AudioSampleRate, AudioChannels, AudioBitDepth,
+            IAudioCapture capture = null;
+            try
+            {
+                if (token != System.Threading.Volatile.Read(ref _previewAudioToken))
+                    return; // stopped or superseded before it began
+
+                var previous = _previewAudioCapture;
+                _previewAudioCapture = null;
+                if (previous != null)
+                    DisposePreviewAudioCapture(previous);
+
+                capture = new AudioCaptureApple();
+                capture.AudioMode = AudioMode;
+                capture.SampleAvailable += OnPreviewAudioSampleAvailable;
+                _previewAudioCapture = capture;
+
+                var started = await capture.StartAsync(AudioSampleRate, AudioChannels, AudioBitDepth,
                     AudioDeviceIndex);
+
+                if (token != System.Threading.Volatile.Read(ref _previewAudioToken))
+                {
+                    // Stopped while starting: the stop may have missed this instance.
+                    ReleasePreviewAudioCapture(capture);
+                    return;
+                }
+
                 if (started)
                 {
                     Debug.WriteLine(
-                        $"[SkiaCamera.Apple] Preview audio capture started: {_previewAudioCapture.SampleRate}Hz, {_previewAudioCapture.Channels}ch");
+                        $"[SkiaCamera.Apple] Preview audio capture started: {capture.SampleRate}Hz, {capture.Channels}ch");
                 }
                 else
                 {
-                    RaiseError($"Preview audio capture failed to start: {_previewAudioCapture.LastError}");
-                    _previewAudioCapture.SampleAvailable -= OnPreviewAudioSampleAvailable;
-                    _previewAudioCapture.Dispose();
-                    _previewAudioCapture = null;
+                    RaiseError($"Preview audio capture failed to start: {capture.LastError}");
+                    ReleasePreviewAudioCapture(capture);
                 }
             }
             catch (Exception ex)
             {
                 RaiseError($"Preview audio capture error: {ex}");
+                if (capture != null)
+                    ReleasePreviewAudioCapture(capture);
             }
             finally
             {
-                _audioSemaphore?.Release();
+                try
+                {
+                    semaphore.Release();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
             }
         });
+    }
+
+    /// <summary>Disposes this capture and clears the field when it still holds it.</summary>
+    private void ReleasePreviewAudioCapture(IAudioCapture capture)
+    {
+        if (ReferenceEquals(_previewAudioCapture, capture))
+            _previewAudioCapture = null;
+
+        DisposePreviewAudioCapture(capture);
+    }
+
+    /// <summary>
+    /// Synchronous on purpose: <see cref="AudioCaptureApple"/> waits for an engine setup in progress
+    /// and tears it down before returning, so the recording's own audio engine never starts while
+    /// the preview one is still half built.
+    /// </summary>
+    private void DisposePreviewAudioCapture(IAudioCapture capture)
+    {
+        try
+        {
+            capture.SampleAvailable -= OnPreviewAudioSampleAvailable;
+            capture.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[SkiaCamera.Apple] Error stopping preview audio: {ex.Message}");
+        }
     }
 
  
@@ -3947,25 +4017,16 @@ public partial class SkiaCamera
 
     partial void StopPreviewAudioCapture()
     {
-        if (_previewAudioCapture == null)
+        // Invalidate a start still in flight even when the field is not set yet.
+        System.Threading.Interlocked.Increment(ref _previewAudioToken);
+
+        var kill = _previewAudioCapture;
+        if (kill == null)
             return;
 
-        try
-        {
-            _previewAudioCapture.SampleAvailable -= OnPreviewAudioSampleAvailable;
-            var kill = _previewAudioCapture;
-            _ = kill.StopAsync().ContinueWith(_ =>
-            {
-                kill.Dispose();
-            });
-
-            _previewAudioCapture = null;
-            Debug.WriteLine("[SkiaCamera.Apple] Preview audio capture stopped");
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[SkiaCamera.Apple] Error stopping preview audio: {ex.Message}");
-        }
+        _previewAudioCapture = null;
+        DisposePreviewAudioCapture(kill);
+        Debug.WriteLine("[SkiaCamera.Apple] Preview audio capture stopped");
     }
 
     #endregion

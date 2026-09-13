@@ -76,11 +76,33 @@ public class AudioCaptureApple : IAudioCapture
         return Task.FromResult(devices);
     }
 
+    /// <summary>
+    /// Serializes engine setup against <see cref="Cleanup"/>. Without it a stop arriving while
+    /// <see cref="StartAsync"/> builds the engine disposed the AVAudioEngine under the running setup
+    /// (EXC_BAD_ACCESS in -[AVAudioNode outputFormatForBus:], seen when recording started right
+    /// after a capture mode switch restarted preview audio).
+    /// </summary>
+    private readonly object _lifecycleLock = new();
+
+    /// <summary>Bumped by every <see cref="Cleanup"/>: a start that began earlier gives up.</summary>
+    private int _generation;
+
+    private volatile bool _disposed;
+
     public async Task<bool> StartAsync(int sampleRate = 44100, int channels = 1,
                                         AudioBitDepth bitDepth = AudioBitDepth.Pcm16Bit, int deviceIndex = -1)
     {
         if (_isCapturing)
             return true;
+
+        if (_disposed)
+            return false;
+
+        int generation;
+        lock (_lifecycleLock)
+        {
+            generation = _generation;
+        }
 
         try
         {
@@ -103,125 +125,136 @@ public class AudioCaptureApple : IAudioCapture
                 return false;
             }
 
-            // Configure audio session for recording
-            var audioSession = AVAudioSession.SharedInstance();
-            NSError sessionError;
-            audioSession.SetCategory(AVAudioSessionCategory.PlayAndRecord,
-                AVAudioSessionCategoryOptions.DefaultToSpeaker | AVAudioSessionCategoryOptions.AllowBluetooth,
-                out sessionError);
-            if (sessionError != null)
+            // Everything from here on is synchronous and holds the lifecycle lock: Cleanup waits
+            // for the engine to be fully built instead of disposing it mid-setup.
+            lock (_lifecycleLock)
             {
-                LastError = $"Audio session category error: {sessionError}";
-                Cleanup();
-                return false;
-            }
-
-            // Apply audio session mode based on AudioMode
-            var avMode = AudioMode switch
-            {
-                CameraAudioMode.VideoRecording => AVAudioSession.ModeVideoRecording,
-                CameraAudioMode.Flat           => AVAudioSession.ModeMeasurement,
-                _                              => AVAudioSession.ModeDefault,
-            };
-            audioSession.SetMode(avMode, out sessionError);
-            if (sessionError != null)
-            {
-                Debug.WriteLine($"[AudioCaptureApple] Audio session mode error: {sessionError}");
-            }
-
-            if (deviceIndex < 0)
-            {
-                deviceIndex = 0;
-            }
-
-            // Select specific audio input device if requested
-            var availableInputs = audioSession.AvailableInputs;
-            if (availableInputs != null && deviceIndex < availableInputs.Length)
-            {
-                var selectedInput = availableInputs[deviceIndex];
-                if (audioSession.SetPreferredInput(selectedInput, out sessionError))
+                if (_disposed || generation != _generation)
                 {
-                    Debug.WriteLine($"[AudioCaptureApple] Selected audio device [{deviceIndex}]: {selectedInput.PortName}");
+                    Debug.WriteLine("[AudioCaptureApple] Stopped while starting, engine not created");
+                    return false;
                 }
-                else
+
+                // Configure audio session for recording
+                var audioSession = AVAudioSession.SharedInstance();
+                NSError sessionError;
+                audioSession.SetCategory(AVAudioSessionCategory.PlayAndRecord,
+                    AVAudioSessionCategoryOptions.DefaultToSpeaker | AVAudioSessionCategoryOptions.AllowBluetooth,
+                    out sessionError);
+                if (sessionError != null)
                 {
-                    LastError = "Failed to select audio device: {sessionError?.LocalizedDescription}";
+                    LastError = $"Audio session category error: {sessionError}";
                     Cleanup();
                     return false;
                 }
-            }
-            else
-            {
-                Debug.WriteLine($"[AudioCaptureApple] Invalid device index {deviceIndex}, using default");
-            }
 
-
-            audioSession.SetActive(true, out sessionError);
-            if (sessionError != null)
-            {
-                LastError = $"Audio session activation error: {sessionError}";
-                Cleanup();
-                return false;
-            }
-
-            // Store requested parameters
-            SampleRate = sampleRate;
-            Channels = channels;
-            BitDepth = bitDepth;
-
-            // Create audio engine
-            _audioEngine = new AVAudioEngine();
-            var inputNode = _audioEngine.InputNode;
-
-            // Enable voice processing only in Voice mode (iOS 13+)
-            bool enableVoiceProcessing = AudioMode == CameraAudioMode.Voice;
-            try
-            {
-                NSError vpError;
-                if (inputNode.SetVoiceProcessingEnabled(enableVoiceProcessing, out vpError))
+                // Apply audio session mode based on AudioMode
+                var avMode = AudioMode switch
                 {
-                    Debug.WriteLine($"[AudioCaptureApple] Voice processing {(enableVoiceProcessing ? "enabled" : "disabled")} for mode {AudioMode}");
+                    CameraAudioMode.VideoRecording => AVAudioSession.ModeVideoRecording,
+                    CameraAudioMode.Flat           => AVAudioSession.ModeMeasurement,
+                    _                              => AVAudioSession.ModeDefault,
+                };
+                audioSession.SetMode(avMode, out sessionError);
+                if (sessionError != null)
+                {
+                    Debug.WriteLine($"[AudioCaptureApple] Audio session mode error: {sessionError}");
+                }
+
+                if (deviceIndex < 0)
+                {
+                    deviceIndex = 0;
+                }
+
+                // Select specific audio input device if requested
+                var availableInputs = audioSession.AvailableInputs;
+                if (availableInputs != null && deviceIndex < availableInputs.Length)
+                {
+                    var selectedInput = availableInputs[deviceIndex];
+                    if (audioSession.SetPreferredInput(selectedInput, out sessionError))
+                    {
+                        Debug.WriteLine($"[AudioCaptureApple] Selected audio device [{deviceIndex}]: {selectedInput.PortName}");
+                    }
+                    else
+                    {
+                        LastError = "Failed to select audio device: {sessionError?.LocalizedDescription}";
+                        Cleanup();
+                        return false;
+                    }
                 }
                 else
                 {
-                    Debug.WriteLine($"[AudioCaptureApple] Voice processing set failed: {vpError?.LocalizedDescription}");
+                    Debug.WriteLine($"[AudioCaptureApple] Invalid device index {deviceIndex}, using default");
                 }
+
+
+                audioSession.SetActive(true, out sessionError);
+                if (sessionError != null)
+                {
+                    LastError = $"Audio session activation error: {sessionError}";
+                    Cleanup();
+                    return false;
+                }
+
+                // Store requested parameters
+                SampleRate = sampleRate;
+                Channels = channels;
+                BitDepth = bitDepth;
+
+                // Create audio engine
+                _audioEngine = new AVAudioEngine();
+                var inputNode = _audioEngine.InputNode;
+
+                // Enable voice processing only in Voice mode (iOS 13+)
+                bool enableVoiceProcessing = AudioMode == CameraAudioMode.Voice;
+                try
+                {
+                    NSError vpError;
+                    if (inputNode.SetVoiceProcessingEnabled(enableVoiceProcessing, out vpError))
+                    {
+                        Debug.WriteLine($"[AudioCaptureApple] Voice processing {(enableVoiceProcessing ? "enabled" : "disabled")} for mode {AudioMode}");
+                    }
+                    else
+                    {
+                        Debug.WriteLine($"[AudioCaptureApple] Voice processing set failed: {vpError?.LocalizedDescription}");
+                    }
+                }
+                catch (Exception vpEx)
+                {
+                    Debug.WriteLine($"[AudioCaptureApple] Voice processing setup failed: {vpEx.Message}");
+                }
+
+                // Get the native format of the input (may change after enabling voice processing)
+                var inputFormat = inputNode.GetBusOutputFormat(0);
+
+                Debug.WriteLine($"[AudioCaptureApple] Input format: {inputFormat.SampleRate}Hz, {inputFormat.ChannelCount}ch");
+
+                // Install tap on input node - use native format for best performance
+                // Buffer size 4096 at 44.1kHz = ~93ms chunks, good balance of latency vs overhead
+                uint bufferSize = 4096;
+
+                inputNode.InstallTapOnBus(
+                    bus: 0,
+                    bufferSize: bufferSize,
+                    format: inputFormat,
+                    tapBlock: (buffer, when) => OnAudioBufferReceived(buffer, when)
+                );
+
+                // Start engine
+                NSError engineError;
+                if (!_audioEngine.StartAndReturnError(out engineError))
+                {
+                    LastError = $"Engine start failed: {engineError?.LocalizedDescription}";
+                    Cleanup();
+                    return false;
+                }
+
+                _captureStartTimeNs = GetCurrentTimeNs();
+                _isCapturing = true;
+
+                Debug.WriteLine($"[AudioCaptureApple] Started successfully. Native format: {inputFormat.SampleRate}Hz, {inputFormat.ChannelCount}ch");
+                return true;
             }
-            catch (Exception vpEx)
-            {
-                Debug.WriteLine($"[AudioCaptureApple] Voice processing setup failed: {vpEx.Message}");
-            }
-
-            // Get the native format of the input (may change after enabling voice processing)
-            var inputFormat = inputNode.GetBusOutputFormat(0);
-
-            Debug.WriteLine($"[AudioCaptureApple] Input format: {inputFormat.SampleRate}Hz, {inputFormat.ChannelCount}ch");
-
-            // Install tap on input node - use native format for best performance
-            // Buffer size 4096 at 44.1kHz = ~93ms chunks, good balance of latency vs overhead
-            uint bufferSize = 4096;
-
-            inputNode.InstallTapOnBus(
-                bus: 0,
-                bufferSize: bufferSize,
-                format: inputFormat,
-                tapBlock: (buffer, when) => OnAudioBufferReceived(buffer, when)
-            );
-
-            // Start engine
-            NSError engineError;
-            if (!_audioEngine.StartAndReturnError(out engineError))
-            {
-                LastError = $"Engine start failed: {engineError?.LocalizedDescription}";
-                Cleanup();
-                return false;
-            }
-
-            _captureStartTimeNs = GetCurrentTimeNs();
-            _isCapturing = true;
-
-            Debug.WriteLine($"[AudioCaptureApple] Started successfully. Native format: {inputFormat.SampleRate}Hz, {inputFormat.ChannelCount}ch");
-            return true;
         }
         catch (Exception ex)
         {
@@ -327,27 +360,32 @@ public class AudioCaptureApple : IAudioCapture
 
     private void Cleanup()
     {
-        _isCapturing = false;
+        lock (_lifecycleLock)
+        {
+            _isCapturing = false;
+            _generation++;
 
-        try
-        {
-            if (_audioEngine != null)
+            try
             {
-                var inputNode = _audioEngine.InputNode;
-                inputNode?.RemoveTapOnBus(0);
-                _audioEngine.Stop();
-                _audioEngine.Dispose();
-                _audioEngine = null;
+                if (_audioEngine != null)
+                {
+                    var inputNode = _audioEngine.InputNode;
+                    inputNode?.RemoveTapOnBus(0);
+                    _audioEngine.Stop();
+                    _audioEngine.Dispose();
+                    _audioEngine = null;
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[AudioCaptureApple] Cleanup error: {ex.Message}");
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AudioCaptureApple] Cleanup error: {ex.Message}");
+            }
         }
     }
 
     public void Dispose()
     {
+        _disposed = true;
         Cleanup();
         GC.SuppressFinalize(this);
     }

@@ -27,6 +27,11 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
+## What's New  1.10.6.153
+
+ * iOS: saved photos keep their metadata. Photos showed "No camera information" and "No lens information" because iOS re-serialized the EXIF while importing raw data and dropped every value stored out of line - make, model, lens make and model, exposure time, aperture, focal length. The asset now goes to Photos as a file, which it stores byte for byte.
+ * iOS: EXIF, TIFF and GPS are written with ImageIO (`AppleJpegMetadata`) instead of the hand-built segment in `JpegExifInjector`, which stays as fallback and on other platforms. The compressed image is copied from the source, so nothing is re-encoded and quality is unchanged.
+
 ## What's New  1.10.6.152
 
  * iOS: fixed a crash when recording started while preview audio was still starting, e.g. record tapped right after switching `CaptureMode` to Video. Stopping preview audio disposed the `AVAudioEngine` under its running setup (`EXC_BAD_ACCESS` in `outputFormatForBus:`). `AudioCaptureApple` now serializes engine setup and cleanup, and a preview audio start that was stopped meanwhile gives up instead of leaving an engine running.

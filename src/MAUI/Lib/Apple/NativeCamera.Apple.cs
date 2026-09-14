@@ -2158,6 +2158,24 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         {
             var data = NSData.FromStream(stream);
 
+            // Photos re-serializes EXIF when it ingests raw data and drops everything stored out of
+            // line (make, model, lens, exposure). Handing it a file URL instead makes it keep the
+            // JPEG, and its metadata, byte for byte.
+            var extension = Path.GetExtension(filename);
+            if (string.IsNullOrEmpty(extension))
+                extension = ".jpg";
+            var tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + extension);
+            NSUrl tempUrl = null;
+            try
+            {
+                data.Save(tempFile, true);
+                tempUrl = NSUrl.FromFilename(tempFile);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SaveJpgStreamToGallery] Could not stage {tempFile}: {ex.Message}");
+            }
+
             // Find or create album BEFORE PerformChanges to avoid nested calls/deadlock
             PHAssetCollection albumCollection = null;
             if (!string.IsNullOrEmpty(album))
@@ -2176,7 +2194,14 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                     OriginalFilename = filename
                 };
                 var creationRequest = PHAssetCreationRequest.CreationRequestForAsset();
-                creationRequest.AddResource(PHAssetResourceType.Photo, data, options);
+                if (tempUrl != null)
+                {
+                    creationRequest.AddResource(PHAssetResourceType.Photo, tempUrl, options);
+                }
+                else
+                {
+                    creationRequest.AddResource(PHAssetResourceType.Photo, data, options);
+                }
 
                 // Add to album if we found/created it
                 if (albumCollection != null)
@@ -2205,6 +2230,17 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             });
 
             var result = await tcs.Task;
+
+            try
+            {
+                if (File.Exists(tempFile))
+                    File.Delete(tempFile);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SaveJpgStreamToGallery] Could not remove {tempFile}: {ex.Message}");
+            }
+
             return result;
         }
         catch (Exception e)

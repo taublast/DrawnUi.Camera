@@ -2560,7 +2560,7 @@ public partial class SkiaCamera : SkiaControl
 
         await using var stream = CreateOutputStreamRotated(captured, false, SKEncodedImageFormat.Jpeg, quality);
 
-        using var exifStream = await JpegExifInjector.InjectExifMetadata(stream, captured.Meta);
+        using var exifStream = await WriteMetadataAsync(stream, captured.Meta);
 
         var filenameOutput = GenerateJpgFileName();
 
@@ -2577,6 +2577,30 @@ public partial class SkiaCamera : SkiaControl
 
         Debug.WriteLine($"[SkiaCamera] failed to save photo");
         return null;
+    }
+
+    /// <summary>
+    /// Puts the capture metadata into the encoded JPEG.
+    ///
+    /// Apple writes it with ImageIO (<see cref="AppleJpegMetadata"/>): iOS re-serializes a photo's
+    /// EXIF when Photos imports it, and it dropped every out-of-line value (make, model, lens, exposure)
+    /// from the hand-built segment, leaving blanks in the saved asset. Other platforms, and Apple when
+    /// ImageIO refuses the file, use <see cref="JpegExifInjector"/>.
+    /// </summary>
+    protected virtual async Task<Stream> WriteMetadataAsync(Stream jpegStream, Metadata meta)
+    {
+#if IOS || MACCATALYST
+        var native = AppleJpegMetadata.Write(jpegStream, meta);
+        if (native != null)
+            return native;
+
+        Debug.WriteLine("[SkiaCamera] ImageIO could not write metadata, using the manual EXIF injector");
+
+        if (jpegStream.CanSeek)
+            jpegStream.Position = 0;
+#endif
+
+        return await JpegExifInjector.InjectExifMetadata(jpegStream, meta);
     }
 
     /// <summary>

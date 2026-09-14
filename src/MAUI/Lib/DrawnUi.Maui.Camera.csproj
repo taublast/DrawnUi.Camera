@@ -23,7 +23,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-      <Version>1.10.6.152</Version>
+      <Version>1.10.6.153</Version>
       <Title>DrawnUI Camera control for .NET MAUI rendered with SkiaSharp</Title>
       <PackageId>DrawnUi.Maui.Camera</PackageId>
       <Description>SkiaCamera control rendered with SkiaSharp and DrawnUI for .NET MAUI on Android, iOS, MacCatalyst and Windows</Description>

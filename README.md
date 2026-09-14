@@ -32,12 +32,9 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * iOS: saved photos keep their metadata. Photos showed "No camera information" and "No lens information" because iOS re-serialized the EXIF while importing raw data and dropped every value stored out of line - make, model, lens make and model, exposure time, aperture, focal length. The asset now goes to Photos as a file, which it stores byte for byte.
  * iOS: EXIF, TIFF and GPS are written with ImageIO (`AppleJpegMetadata`) instead of the hand-built segment in `JpegExifInjector`, which stays as fallback and on other platforms. The compressed image is copied from the source, so nothing is re-encoded and quality is unchanged.
 
-## What's New  1.10.6.152
+## Previously 
 
  * iOS: fixed a crash when recording started while preview audio was still starting, e.g. record tapped right after switching `CaptureMode` to Video. Stopping preview audio disposed the `AVAudioEngine` under its running setup (`EXC_BAD_ACCESS` in `outputFormatForBus:`). `AudioCaptureApple` now serializes engine setup and cleanup, and a preview audio start that was stopped meanwhile gives up instead of leaving an engine running.
-
-## What's New  1.10.6.15
-
  * iOS: selfie video mirroring follows `MirrorSavedSelfiePhoto` like the still. The encoder always mirrored front-camera frames, so with `MirrorSavedSelfiePhoto=true` a clip came out flipped against the screen. Applies to the GPU processing path (`CaptureFrameCore`, zero-copy and CPU fallback) and to the native `AVCaptureMovieFileOutput` connection (`VideoMirrored`). While encoder frames feed the preview the display flip is inverted for that time, so the screen looks the same before, during and after recording.
 * Fix Android not using audio mode for video
  

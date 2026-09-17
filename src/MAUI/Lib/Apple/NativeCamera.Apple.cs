@@ -1525,6 +1525,14 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
         try
         {
+            // iOS 26 throws on this setter unless the output reports support for it, and the
+            // exception arrives on every capture while stabilization is on.
+            if (!_stillImageOutput.IsStillImageStabilizationSupported)
+            {
+                Debug.WriteLine("[NativeCamera.Apple] Still image stabilization not supported by this output");
+                return;
+            }
+
             _stillImageOutput.AutomaticallyEnablesStillImageStabilizationWhenAvailable = FormsControl.VideoStabilization;
         }
         catch (Exception ex)

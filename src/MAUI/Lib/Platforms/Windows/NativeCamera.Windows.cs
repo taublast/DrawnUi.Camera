@@ -449,7 +449,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
     #region Setup
 
-    private async void Setup()
+    private async Task Setup()
     {
         try
         {
@@ -465,8 +465,46 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         }
     }
 
+    /// <summary>
+    /// Hands the capture device back to Windows: the frame reader and MediaCapture are what hold it, and while
+    /// they live the camera counts as in use (privacy indicator, camera light, other apps refused), however
+    /// long ago the frames stopped. Called when the camera is switched off for real and before setting up
+    /// again, so a second MediaCapture never piles on top of the first one.
+    /// </summary>
+    private void ReleaseHardware()
+    {
+        if (_frameReader == null && _mediaCapture == null)
+            return;
+
+        try
+        {
+            if (_frameReader != null)
+            {
+                _frameReader.FrameArrived -= OnFrameArrived;
+                _frameReader.Dispose();
+                _frameReader = null;
+            }
+
+            _frameSource = null;
+            _mediaCapture?.Dispose();
+            _mediaCapture = null;
+            Debug.WriteLine("[NativeCameraWindows] Capture device released");
+        }
+        catch (Exception e)
+        {
+            Debug.WriteLine($"[NativeCameraWindows] ReleaseHardware error: {e}");
+            _frameReader = null;
+            _frameSource = null;
+            _mediaCapture = null;
+        }
+    }
+
     private async Task SetupHardware()
     {
+        // whatever was open before goes first: MediaCapture holds the device, so building a second one over it
+        // leaks the camera for the life of the process
+        ReleaseHardware();
+
         //Debug.WriteLine("[NativeCameraWindows] Finding camera devices...");
 
         var devices = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture);
@@ -1484,7 +1522,9 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
         try
         {
-            Setup();
+            // awaited: the frame reader is created in there, and starting it before it exists was a silent
+            // no-start that only worked because callers happened to try again
+            await Setup();
 
             if (State == CameraProcessorState.Enabled && _frameReader != null)
             {
@@ -1533,6 +1573,12 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
                 }
 
                 State = CameraProcessorState.None;
+
+                // force means the camera is being switched off, not paused between frames: give the device
+                // back, or Windows keeps it counted as in use and the camera light stays on. Not while
+                // recording — the recording runs through the same MediaCapture.
+                if (force && !_isRecordingVideo)
+                    ReleaseHardware();
 
                 MainThread.BeginInvokeOnMainThread(() =>
                 {
@@ -3184,8 +3230,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             lock (_lockPreview)
             {
                 _progressTimer?.Dispose();
-                _frameReader?.Dispose();
-                _mediaCapture?.Dispose();
+                ReleaseHardware(); // detaches the frame handler as well, and leaves nothing disposed twice
                 _frameSemaphore?.Dispose();
                 _frameSemaphore = null;
 

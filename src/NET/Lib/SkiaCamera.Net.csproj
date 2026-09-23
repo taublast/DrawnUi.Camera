@@ -17,7 +17,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-      <Version>1.10.6.161</Version>
+      <Version>1.10.6.162</Version>
       <Title>SkiaCamera for .NET</Title>
       <PackageId>DrawnUi.Net.Camera</PackageId>
       <Description>SkiaCamera engine for .NET</Description>

@@ -27,8 +27,9 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.6.161
+## What's New  1.10.6.162
 
+ * Windows: the app no longer runs a full garbage collection twenty times a second while the camera is on. Every preview frame created a projected `SoftwareBitmap` (and its `BitmapBuffer`), and CsWinRT's constructors for those classes call `GC.AddMemoryPressure(1.2 MB)` each, so at camera frame rate the GC kept inducing gen2 collections that paused every thread, the UI included - scrolling in any window stuttered while the camera ran. The frame's pixels are now read through the raw COM vtables (`SoftwareBitmapPixels`: IVideoMediaFrame, ISoftwareBitmap, IBitmapBuffer, IMemoryBufferByteAccess), no projected object per frame, and the `SKImage` keeps the buffer locked until it is disposed instead of reading memory that was already unlocked. Pre-recording and non-BGRA formats still take the projected path.
  * Windows: switching the camera off now hands the device back. Stopping only paused the frame reader, so the `MediaCapture` stayed open and Windows kept showing the camera as in use (the privacy indicator and the webcam light stayed on, other apps found it busy) until the control was disposed. `Stop(force)` now disposes the frame reader and the `MediaCapture` (`ReleaseHardware()`), `SetupHardware()` releases any previous capture before creating a new one, `Dispose()` goes through the same path, and `Start()` awaits `Setup()` instead of firing it and moving on. Recording is not interrupted: the device is kept while a video is being written.
 
 ## Previously 

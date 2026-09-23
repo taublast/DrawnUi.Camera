@@ -15,6 +15,7 @@ using Windows.Media.Devices;
 using Windows.Media.MediaProperties;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using WinRT;
 
 namespace DrawnUi.Camera;
 
@@ -197,7 +198,7 @@ enum D3D11_CPU_ACCESS_FLAG : uint { WRITE = 65536, READ = 131072 }
 enum D3D11_MAP : uint { READ = 1, WRITE = 2, READ_WRITE = 3, WRITE_DISCARD = 4, WRITE_NO_OVERWRITE = 5 }
 
 [ComImport]
-[Guid("035f3ab4-482e-4e50-b960-13b05d3696c9")]
+[Guid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IDirect3DDxgiInterfaceAccess
 {
@@ -275,6 +276,227 @@ struct DXGI_MAPPED_RECT
 unsafe interface IMemoryBufferByteAccess
 {
     void GetBuffer(out byte* buffer, out uint capacity);
+}
+
+/// <summary>
+/// Reads the pixels of a video frame's SoftwareBitmap through the raw COM vtables, so that no projected
+/// <see cref="SoftwareBitmap"/> or <see cref="BitmapBuffer"/> object is created for the frame. CsWinRT marks
+/// those classes as large: their constructors call <c>GC.AddMemoryPressure(1 200 000)</c> each, and at camera frame
+/// rate that pressure made the GC run induced full collections about twenty times a second, pausing every thread
+/// of the app. The returned image wraps the locked buffer and unlocks and releases it when it is disposed.
+/// </summary>
+public static unsafe class SoftwareBitmapPixels
+{
+    static readonly Guid IidVideoMediaFrame = new("00DD4CCB-32BD-4FE1-A013-7CC13CF5DBCF");
+    static readonly Guid IidSoftwareBitmap = new("689E0708-7EEF-483F-963F-DA938818E073");
+    static readonly Guid IidMemoryBuffer = new("FBC4DD2A-245B-11E4-AF98-689423260CF8");
+    static readonly Guid IidMemoryBufferByteAccess = new("5B0D3235-4DBA-4D44-865E-8F1D0E4FD04D");
+    static readonly Guid IidClosable = new("30D5A829-7FA4-4026-83BB-D75BAE4EA99E");
+
+    // vtable slots (6 IInspectable entries first), the same numbers the CsWinRT projection calls
+    const int SlotGetSoftwareBitmap = 8;                                                             // IVideoMediaFrame
+    const int SlotPixelFormat = 6, SlotAlphaMode = 7, SlotPixelWidth = 8, SlotPixelHeight = 9, SlotLockBuffer = 15; // ISoftwareBitmap
+    const int SlotGetPlaneDescription = 7;                                                           // IBitmapBuffer
+    const int SlotCreateReference = 6;                                                               // IMemoryBuffer
+    const int SlotGetBuffer = 3;                                                                     // IMemoryBufferByteAccess (IUnknown)
+    const int SlotClose = 6;                                                                         // IClosable
+
+    static bool _loggedFailure;
+
+    /// <summary>Frames served from the raw path since start (diagnostics).</summary>
+    public static long Wrapped;
+    /// <summary>Frames that fell back to the projected bitmap since start (diagnostics).</summary>
+    public static long Fallbacks;
+    /// <summary>Where the last fallback happened (diagnostics).</summary>
+    public static string LastFailure = "";
+    /// <summary>Direct3D frames converted through the staging texture (diagnostics).</summary>
+    public static long D3DOptimized;
+    /// <summary>Direct3D frames that fell back to a SoftwareBitmap copy (diagnostics).</summary>
+    public static long D3DFallbacks;
+    /// <summary>Message of the last staging-texture conversion failure (diagnostics).</summary>
+    public static string LastD3DError = "";
+
+    static SKImage Fail(string stage)
+    {
+        Fallbacks++;
+        LastFailure = stage;
+        return null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct PlaneDescription
+    {
+        public int StartIndex, Width, Height, Stride;
+    }
+
+    /// <summary>The COM references an image keeps alive; released once, from the image's release callback.</summary>
+    sealed class Lease
+    {
+        public IntPtr Bitmap, Buffer, MemoryBuffer, Reference, Access;
+        int _released;
+
+        public void Release()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0)
+                return;
+            Close(Reference); // IMemoryBufferReference
+            Close(Buffer);    // BitmapBuffer: closing it unlocks the bitmap
+            ReleaseRef(ref Access);
+            ReleaseRef(ref Reference);
+            ReleaseRef(ref MemoryBuffer);
+            ReleaseRef(ref Buffer);
+            ReleaseRef(ref Bitmap);
+        }
+    }
+
+    /// <summary>
+    /// The frame's bitmap as a BGRA premultiplied image over the locked native buffer, or null when there is no
+    /// software bitmap, the format is not BGRA8 premultiplied, or any call fails (the caller then takes the
+    /// projected path).
+    /// </summary>
+    public static SKImage Wrap(VideoMediaFrame videoFrame)
+    {
+        if (videoFrame is not IWinRTObject winrt)
+            return Fail("not-winrt");
+        var frame = QueryInterface(winrt.NativeObject.ThisPtr, IidVideoMediaFrame);
+        if (frame == IntPtr.Zero)
+            return Fail("qi-videoframe");
+
+        var lease = new Lease();
+        try
+        {
+            IntPtr bitmapUnknown;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(frame, SlotGetSoftwareBitmap))(frame, &bitmapUnknown) != 0
+                || bitmapUnknown == IntPtr.Zero)
+                return Fail("get-bitmap");
+            lease.Bitmap = QueryInterface(bitmapUnknown, IidSoftwareBitmap);
+            Marshal.Release(bitmapUnknown);
+            if (lease.Bitmap == IntPtr.Zero)
+                return Fail("qi-bitmap");
+
+            int format, alpha, width, height;
+            if (GetInt(lease.Bitmap, SlotPixelFormat, &format) != 0 || GetInt(lease.Bitmap, SlotAlphaMode, &alpha) != 0
+                || GetInt(lease.Bitmap, SlotPixelWidth, &width) != 0 || GetInt(lease.Bitmap, SlotPixelHeight, &height) != 0)
+                return Fail("get-props");
+            if (format != (int)BitmapPixelFormat.Bgra8 || alpha != (int)BitmapAlphaMode.Premultiplied || width <= 0 || height <= 0)
+                return Fail("format");
+
+            IntPtr buffer;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, int, IntPtr*, int>)Slot(lease.Bitmap, SlotLockBuffer))(lease.Bitmap, (int)BitmapBufferAccessMode.Read, &buffer) != 0
+                || buffer == IntPtr.Zero)
+                return Fail("lock");
+            lease.Buffer = buffer;
+
+            PlaneDescription plane;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, int, PlaneDescription*, int>)Slot(buffer, SlotGetPlaneDescription))(buffer, 0, &plane) != 0)
+                return Fail("plane");
+
+            lease.MemoryBuffer = QueryInterface(buffer, IidMemoryBuffer);
+            if (lease.MemoryBuffer == IntPtr.Zero)
+                return Fail("qi-membuf");
+            IntPtr reference;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(lease.MemoryBuffer, SlotCreateReference))(lease.MemoryBuffer, &reference) != 0
+                || reference == IntPtr.Zero)
+                return Fail("reference");
+            lease.Reference = reference;
+
+            lease.Access = QueryInterface(reference, IidMemoryBufferByteAccess);
+            if (lease.Access == IntPtr.Zero)
+                return Fail("qi-access");
+            byte* data;
+            uint capacity;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, byte**, uint*, int>)Slot(lease.Access, SlotGetBuffer))(lease.Access, &data, &capacity) != 0
+                || data == null)
+                return Fail("getbuffer");
+            if (plane.Stride < width * 4 || plane.StartIndex + (long)plane.Stride * (height - 1) + width * 4L > capacity)
+                return Fail("bounds");
+
+            var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var pixmap = new SKPixmap(info, (IntPtr)(data + plane.StartIndex), plane.Stride);
+            var image = SKImage.FromPixels(pixmap, static (address, context) => ((Lease)context).Release(), lease);
+            if (image == null)
+                return Fail("fromPixels");
+            lease = null; // owned by the image from here on
+            Wrapped++;
+            return image;
+        }
+        catch (Exception e)
+        {
+            if (!_loggedFailure)
+            {
+                _loggedFailure = true;
+                Debug.WriteLine($"[NativeCameraWindows] SoftwareBitmapPixels failed, using the projected bitmap: {e}");
+            }
+            return Fail("exception");
+        }
+        finally
+        {
+            lease?.Release();
+            Marshal.Release(frame);
+        }
+    }
+
+    static readonly Guid IidDxgiInterfaceAccess = new("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1"); // windows.graphics.directx.direct3d11.interop.h
+
+    /// <summary>
+    /// <c>IDirect3DDxgiInterfaceAccess::GetInterface</c> on a projected Direct3D surface: the DXGI/D3D11 object
+    /// (<paramref name="iid"/>, e.g. ID3D11Texture2D) behind it, with one reference the caller releases, or zero.
+    /// A CsWinRT object cannot be cast to a [ComImport] interface, so the access interface is queried on the raw pointer.
+    /// </summary>
+    public static IntPtr GetDxgiInterface(object surface, Guid iid)
+    {
+        if (surface is not IWinRTObject winrt)
+        {
+            LastD3DError = $"surface is {surface?.GetType().FullName ?? "null"}, not IWinRTObject";
+            return IntPtr.Zero;
+        }
+        var g = IidDxgiInterfaceAccess;
+        var qi = Marshal.QueryInterface(winrt.NativeObject.ThisPtr, ref g, out var access);
+        if (qi != 0 || access == IntPtr.Zero)
+        {
+            LastD3DError = $"QI IDirect3DDxgiInterfaceAccess hr=0x{qi:X8}";
+            return IntPtr.Zero;
+        }
+        try
+        {
+            IntPtr result;
+            var hr = ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, int>)Slot(access, 3))(access, &iid, &result);
+            if (hr != 0)
+                LastD3DError = $"GetInterface({iid}) hr=0x{hr:X8}";
+            return hr == 0 ? result : IntPtr.Zero;
+        }
+        finally
+        {
+            Marshal.Release(access);
+        }
+    }
+
+    static void* Slot(IntPtr obj, int index) => (*(void***)obj)[index];
+
+    static int GetInt(IntPtr obj, int slot, int* value)
+        => ((delegate* unmanaged[Stdcall]<IntPtr, int*, int>)Slot(obj, slot))(obj, value);
+
+    static IntPtr QueryInterface(IntPtr obj, Guid iid)
+        => Marshal.QueryInterface(obj, ref iid, out var result) == 0 ? result : IntPtr.Zero;
+
+    static void Close(IntPtr obj)
+    {
+        if (obj == IntPtr.Zero)
+            return;
+        var closable = QueryInterface(obj, IidClosable);
+        if (closable == IntPtr.Zero)
+            return;
+        ((delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(closable, SlotClose))(closable);
+        Marshal.Release(closable);
+    }
+
+    static void ReleaseRef(ref IntPtr obj)
+    {
+        if (obj == IntPtr.Zero)
+            return;
+        Marshal.Release(obj);
+        obj = IntPtr.Zero;
+    }
 }
 
 #endregion
@@ -1007,22 +1229,35 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         ID3D11Texture2D texture = null;
         ID3D11Device device = null;
         ID3D11DeviceContext context = null;
+        var stage = "start";
 
         try
         {
-            // Get DXGI Interface Access
-            var access = d3dSurface as IDirect3DDxgiInterfaceAccess;
-            if (access == null) return null;
+            // The surface is a CsWinRT object: it cannot be cast to a [ComImport] interface (that cast always
+            // failed, and every frame silently took the SoftwareBitmap copy below), so the DXGI access
+            // interface is queried on the raw pointer instead.
+            stage = "get-interface";
+            var texturePtr = SoftwareBitmapPixels.GetDxgiInterface(d3dSurface, typeof(ID3D11Texture2D).GUID);
+            if (texturePtr == IntPtr.Zero)
+            {
+                SoftwareBitmapPixels.LastD3DError = "no ID3D11Texture2D: " + SoftwareBitmapPixels.LastD3DError;
+                return null;
+            }
 
-            var textureGuid = typeof(ID3D11Texture2D).GUID;
-            var texturePtr = access.GetInterface(ref textureGuid);
-            if (texturePtr == IntPtr.Zero) return null;
-
+            stage = "wrapper";
             texture = Marshal.GetObjectForIUnknown(texturePtr) as ID3D11Texture2D;
-            if (texture == null) return null;
+            Marshal.Release(texturePtr); // the wrapper holds its own reference
+            if (texture == null)
+            {
+                SoftwareBitmapPixels.LastD3DError = "ID3D11Texture2D wrapper";
+                return null;
+            }
 
+            stage = "desc";
             texture.GetDesc(out D3D11_TEXTURE2D_DESC desc);
+            stage = "device";
             texture.GetDevice(out device);
+            stage = "context";
             device.GetImmediateContext(out context);
 
             D3D11_MAPPED_SUBRESOURCE mapped;
@@ -1038,10 +1273,12 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
             if (useStaging)
             {
+                stage = "staging";
                 var stagingTexture = GetOrCreateReadbackTexture(device, desc);
 
                 try
                 {
+                    stage = "copy";
                     context.CopyResource((ID3D11Resource)stagingTexture, (ID3D11Resource)texture);
                 }
                 catch
@@ -1058,15 +1295,17 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
                 resourceToMap = (ID3D11Resource)texture;
             }
 
+            stage = "map";
             context.Map(resourceToMap, 0, (uint)D3D11_MAP.READ, 0, out mapped);
 
             try
             {
-                // Create SKImage from mapped memory
-                // We use SKImage.FromPixels which copies the data unless we use a ReleaseProc, but we need to Unmap immediately so copy is safer/easier.
-                // This is still faster than SoftwareBitmap intermediate.
+                // One copy out of the mapped staging memory: the mapping ends right after (the staging texture is
+                // reused for the next frame), so the image must own its pixels. FromPixels would only wrap the
+                // pointer and read unmapped memory later.
                 var info = new SKImageInfo((int)desc.Width, (int)desc.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
-                var skImage = SKImage.FromPixels(info, mapped.pData, (int)mapped.RowPitch);
+                stage = $"image {desc.Width}x{desc.Height} fmt={desc.Format} pitch={mapped.RowPitch}";
+                var skImage = SKImage.FromPixelCopy(info, mapped.pData, (int)mapped.RowPitch);
                 return skImage;
             }
             finally
@@ -1077,6 +1316,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         catch (Exception e)
         {
             ReleaseCachedReadbackTexture();
+            SoftwareBitmapPixels.LastD3DError = $"{stage}: {e.GetType().Name} {e.Message} hr=0x{e.HResult:X8}";
             Debug.WriteLine($"[NativeCameraWindows] ConvertDirect3DToOptimizedSKImage error: {e}");
             return null;
         }
@@ -1093,69 +1333,6 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     #endregion
 
     #region Improved Frame Processing
-
-    /// <summary>
-    /// Process Direct3D frame using GPU-assisted conversion to SoftwareBitmap
-    /// This leverages GPU-resident data for better performance than pure software processing
-    /// Will set _preview.
-    /// </summary>
-    private async void ProcessDirect3DFrameAsync(Windows.Graphics.DirectX.Direct3D11.IDirect3DSurface d3dSurface)
-    {
-        if (!await _frameSemaphore.WaitAsync(1)) // Skip if busy processing
-        {
-            FormsControl?.OnWindowsRecordingSourceDrop();
-            return;
-        }
-
-        _isProcessingFrame = true;
-        CapturedImage capturedImage = null;
-        try
-        {
-            // PRIORITY 1: Try highly optimized Staging Texture Map (1 copy)
-            // This bypasses the SoftwareBitmap wrapper overhead and double buffering
-            var skImage = ConvertDirect3DToOptimizedSKImage(d3dSurface);
-
-            if (skImage == null)
-            {
-                // PRIORITY 2: Fallback to SoftwareBitmap (2 copies)
-                // GPU Copy (Surface->SoftBitmap) -> CPU Copy (SoftBitmap->Skia)
-                var softwareBitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(d3dSurface);
-                if (softwareBitmap != null)
-                {
-                    skImage = await ConvertToSKImageDirectAsync(softwareBitmap);
-                    softwareBitmap.Dispose();
-                }
-            }
-
-            if (skImage != null)
-            {
-                var meta = FormsControl.CameraDevice.Meta;
-                var rotation = FormsControl.DeviceRotation;
-                Metadata.ApplyRotation(meta, rotation);
-
-                capturedImage = new CapturedImage()
-                {
-                    DeviceRotation = FormsControl.DeviceRotation,
-                    Facing = FormsControl.CameraDevice?.Position ?? FormsControl.Facing,
-                    Time = DateTime.UtcNow,
-                    Image = skImage, // Transfer ownership to CapturedImage - renderer will dispose
-                    Meta = meta,
-                    Rotation = rotation
-                };
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.WriteLine($"[NativeCameraWindows] ProcessDirect3DFrameAsync error: {e}");
-        }
-        finally
-        {
-            _isProcessingFrame = false;
-            _frameSemaphore?.Release();
-        }
-
-        DeliverCapturedFrame(capturedImage);
-    }
 
     /// <summary>
     /// Improved frame arrival handler with GPU acceleration priority
@@ -1202,25 +1379,10 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             {
                 var videoFrame = frame.VideoMediaFrame;
 
-                // PRIORITY 1: Use GPU-assisted Direct3D processing
-                // This is the fastest path for Preview, bypassing SoftwareBitmap overhead
-                if (videoFrame.Direct3DSurface != null)
-                {
-                    //Debug.WriteLine("[NativeCameraWindows] Frame arrived with Direct3D surface, using GPU-assisted processing...");
-                    ProcessDirect3DFrameAsync(videoFrame.Direct3DSurface);
-                    return;
-                }
-
-                // PRIORITY 2: Fallback to software bitmap processing
-                if (videoFrame.SoftwareBitmap != null)
-                {
-                    //Debug.WriteLine("[NativeCameraWindows] Frame arrived with software bitmap, processing...");
-                    ProcessFrameAsync(videoFrame.SoftwareBitmap);
-                }
-                else
-                {
-                    //Debug.WriteLine("[NativeCameraWindows] Frame arrived but no usable bitmap format available");
-                }
+                // The software bitmap first, read through raw COM (SoftwareBitmapPixels) so no projected
+                // SoftwareBitmap is created (its constructor adds 1.2 MB of GC pressure per frame); a frame that
+                // has no software bitmap goes through its Direct3D surface. Neither is touched here.
+                ProcessFrameAsync(videoFrame);
             }
             withError = null;
         }
@@ -1244,6 +1406,89 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         {
             return _preview == null;
         }
+    }
+
+    /// <summary>
+    /// Preview frame from a software bitmap. The pixels are taken through the raw COM interfaces
+    /// (<see cref="SoftwareBitmapPixels"/>) so that no projected <see cref="SoftwareBitmap"/> / BitmapBuffer object
+    /// exists per frame; only the pre-recording buffer and unusual pixel formats fall back to the projected path.
+    /// </summary>
+    private async void ProcessFrameAsync(VideoMediaFrame videoFrame)
+    {
+        if (!await _frameSemaphore.WaitAsync(1)) // Skip if busy processing
+        {
+            FormsControl?.OnWindowsRecordingSourceDrop();
+            return;
+        }
+
+        _isProcessingFrame = true;
+        CapturedImage capturedImage = null;
+
+        try
+        {
+            var preRecording = _enablePreRecording && !_isRecordingVideo;
+            var skImage = preRecording ? null : SoftwareBitmapPixels.Wrap(videoFrame);
+            if (skImage == null)
+            {
+                var d3dSurface = preRecording ? null : videoFrame.Direct3DSurface;
+                if (d3dSurface != null)
+                {
+                    // staging-texture readback when the surface is DXGI-backed, else a GPU copy into a software bitmap
+                    skImage = ConvertDirect3DToOptimizedSKImage(d3dSurface);
+                    if (skImage != null)
+                        SoftwareBitmapPixels.D3DOptimized++;
+                    else
+                        SoftwareBitmapPixels.D3DFallbacks++;
+                    if (skImage == null)
+                    {
+                        var copy = await SoftwareBitmap.CreateCopyFromSurfaceAsync(d3dSurface);
+                        if (copy != null)
+                        {
+                            skImage = await ConvertToSKImageDirectAsync(copy);
+                            copy.Dispose();
+                        }
+                    }
+                }
+                else
+                {
+                    var softwareBitmap = videoFrame.SoftwareBitmap;
+                    if (softwareBitmap != null)
+                    {
+                        if (preRecording)
+                            BufferPreRecordingFrameFromBitmap(softwareBitmap);
+                        skImage = await ConvertToSKImageDirectAsync(softwareBitmap);
+                    }
+                }
+            }
+
+            if (skImage != null)
+            {
+                var meta = FormsControl.CameraDevice.Meta;
+                var rotation = FormsControl.DeviceRotation;
+                Metadata.ApplyRotation(meta, rotation);
+
+                capturedImage = new CapturedImage()
+                {
+                    DeviceRotation = FormsControl.DeviceRotation,
+                    Facing = FormsControl.CameraDevice?.Position ?? FormsControl.Facing,
+                    Time = DateTime.UtcNow,
+                    Image = skImage, // Transfer ownership to CapturedImage - renderer will dispose
+                    Meta = meta,
+                    Rotation = rotation
+                };
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.WriteLine($"[NativeCameraWindows] ProcessFrameAsync error: {e}");
+        }
+        finally
+        {
+            _isProcessingFrame = false;
+            _frameSemaphore?.Release();
+        }
+
+        DeliverCapturedFrame(capturedImage);
     }
 
     /// <summary>

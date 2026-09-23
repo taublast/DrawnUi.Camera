@@ -29,6 +29,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ## What's New  1.10.6.171
 
+ * Built on DrawnUi 1.10.6.17 (`DrawnUi.Maui` / `DrawnUi.Net`), up from 1.10.6.16.
  * Windows: the D3D preview path no longer breaks once another library opens a Direct3D device in the process (DirectML through ONNX Runtime, for one). The `ID3D11Device` / `ID3D11DeviceContext` / `ID3D11Texture2D` COM interop declared the methods that really return `void` (`GetDevice`, `GetDesc`, `GetImmediateContext`, `CopyResource`, `Unmap`, the state setters) without `[PreserveSig]`, so the interop stub read whatever the return register happened to hold as an HRESULT. That was harmless until D3D12/DirectML was loaded, after which `GetImmediateContext` "failed" on every frame, the conversion fell back to the projected `SoftwareBitmap` copy, and the CsWinRT memory-pressure GC storm from 1.10.6.162 came back (twenty induced gen2 collections a second, scrolling stuttered in every window) - and stayed even after the other library went idle. Every void method now carries `[PreserveSig]`; the three value-returning getters (`GetFeatureLevel`, `GetCreationFlags`, `GetExceptionMode`) are declared with their real signatures.
 
 ## What's New  1.10.6.162

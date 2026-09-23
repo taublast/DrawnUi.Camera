@@ -27,13 +27,14 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.6.153
+## What's New  1.10.6.161
 
- * iOS: saved photos keep their metadata. Photos showed "No camera information" and "No lens information" because iOS re-serialized the EXIF while importing raw data and dropped every value stored out of line - make, model, lens make and model, exposure time, aperture, focal length. The asset now goes to Photos as a file, which it stores byte for byte.
- * iOS: EXIF, TIFF and GPS are written with ImageIO (`AppleJpegMetadata`) instead of the hand-built segment in `JpegExifInjector`, which stays as fallback and on other platforms. The compressed image is copied from the source, so nothing is re-encoded and quality is unchanged.
+ * Windows: switching the camera off now hands the device back. Stopping only paused the frame reader, so the `MediaCapture` stayed open and Windows kept showing the camera as in use (the privacy indicator and the webcam light stayed on, other apps found it busy) until the control was disposed. `Stop(force)` now disposes the frame reader and the `MediaCapture` (`ReleaseHardware()`), `SetupHardware()` releases any previous capture before creating a new one, `Dispose()` goes through the same path, and `Start()` awaits `Setup()` instead of firing it and moving on. Recording is not interrupted: the device is kept while a video is being written.
 
 ## Previously 
 
+ * iOS: saved photos keep their metadata. Photos showed "No camera information" and "No lens information" because iOS re-serialized the EXIF while importing raw data and dropped every value stored out of line - make, model, lens make and model, exposure time, aperture, focal length. The asset now goes to Photos as a file, which it stores byte for byte.
+ * iOS: EXIF, TIFF and GPS are written with ImageIO (`AppleJpegMetadata`) instead of the hand-built segment in `JpegExifInjector`, which stays as fallback and on other platforms. The compressed image is copied from the source, so nothing is re-encoded and quality is unchanged.
  * iOS: fixed a crash when recording started while preview audio was still starting, e.g. record tapped right after switching `CaptureMode` to Video. Stopping preview audio disposed the `AVAudioEngine` under its running setup (`EXC_BAD_ACCESS` in `outputFormatForBus:`). `AudioCaptureApple` now serializes engine setup and cleanup, and a preview audio start that was stopped meanwhile gives up instead of leaving an engine running.
  * iOS: selfie video mirroring follows `MirrorSavedSelfiePhoto` like the still. The encoder always mirrored front-camera frames, so with `MirrorSavedSelfiePhoto=true` a clip came out flipped against the screen. Applies to the GPU processing path (`CaptureFrameCore`, zero-copy and CPU fallback) and to the native `AVCaptureMovieFileOutput` connection (`VideoMirrored`). While encoder frames feed the preview the display flip is inverted for that time, so the screen looks the same before, during and after recording.
 * Fix Android not using audio mode for video

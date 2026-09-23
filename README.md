@@ -27,6 +27,10 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
+## What's New  1.10.6.163
+
+ * Windows: the D3D preview path no longer breaks once another library opens a Direct3D device in the process (DirectML through ONNX Runtime, for one). The `ID3D11Device` / `ID3D11DeviceContext` / `ID3D11Texture2D` COM interop declared the methods that really return `void` (`GetDevice`, `GetDesc`, `GetImmediateContext`, `CopyResource`, `Unmap`, the state setters) without `[PreserveSig]`, so the interop stub read whatever the return register happened to hold as an HRESULT. That was harmless until D3D12/DirectML was loaded, after which `GetImmediateContext` "failed" on every frame, the conversion fell back to the projected `SoftwareBitmap` copy, and the CsWinRT memory-pressure GC storm from 1.10.6.162 came back (twenty induced gen2 collections a second, scrolling stuttered in every window) - and stayed even after the other library went idle. Every void method now carries `[PreserveSig]`; the three value-returning getters (`GetFeatureLevel`, `GetCreationFlags`, `GetExceptionMode`) are declared with their real signatures.
+
 ## What's New  1.10.6.162
 
  * Windows: the app no longer runs a full garbage collection twenty times a second while the camera is on. Every preview frame created a projected `SoftwareBitmap` (and its `BitmapBuffer`), and CsWinRT's constructors for those classes call `GC.AddMemoryPressure(1.2 MB)` each, so at camera frame rate the GC kept inducing gen2 collections that paused every thread, the UI included - scrolling in any window stuttered while the camera ran. The frame's pixels are now read through the raw COM vtables (`SoftwareBitmapPixels`: IVideoMediaFrame, ISoftwareBitmap, IBitmapBuffer, IMemoryBufferByteAccess), no projected object per frame, and the `SKImage` keeps the buffer locked until it is disposed instead of reading memory that was already unlocked. Pre-recording and non-BGRA formats still take the projected path.

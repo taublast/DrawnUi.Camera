@@ -35,16 +35,16 @@ struct D3D11_MAPPED_SUBRESOURCE
 interface ID3D11Texture2D : ID3D11Resource
 {
     // ID3D11Resource methods
-    new void GetDevice(out ID3D11Device ppDevice);
+    [PreserveSig] new void GetDevice(out ID3D11Device ppDevice);
     new void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     new void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     new void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
-    new void GetType(out int pResourceDimension);
-    new void SetEvictionPriority(uint EvictionPriority);
-    new uint GetEvictionPriority();
+    [PreserveSig] new void GetType(out int pResourceDimension);
+    [PreserveSig] new void SetEvictionPriority(uint EvictionPriority);
+    [PreserveSig] new uint GetEvictionPriority();
 
     // ID3D11Texture2D methods
-    void GetDesc(out D3D11_TEXTURE2D_DESC pDesc);
+    [PreserveSig] void GetDesc(out D3D11_TEXTURE2D_DESC pDesc);
 }
 
 [ComImport]
@@ -52,13 +52,13 @@ interface ID3D11Texture2D : ID3D11Resource
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface ID3D11Resource : ID3D11DeviceChild
 {
-    new void GetDevice(out ID3D11Device ppDevice);
+    [PreserveSig] new void GetDevice(out ID3D11Device ppDevice);
     new void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     new void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     new void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
-    void GetType(out int pResourceDimension);
-    void SetEvictionPriority(uint EvictionPriority);
-    uint GetEvictionPriority();
+    [PreserveSig] void GetType(out int pResourceDimension);
+    [PreserveSig] void SetEvictionPriority(uint EvictionPriority);
+    [PreserveSig] uint GetEvictionPriority();
 }
 
 [ComImport]
@@ -66,7 +66,7 @@ interface ID3D11Resource : ID3D11DeviceChild
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface ID3D11DeviceChild
 {
-    void GetDevice(out ID3D11Device ppDevice);
+    [PreserveSig] void GetDevice(out ID3D11Device ppDevice);
     void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
@@ -105,18 +105,18 @@ interface ID3D11Device
     void OpenSharedResource(IntPtr hResource, ref Guid ReturnedInterface, out IntPtr ppResource);
     void CheckFormatSupport(uint Format, out uint pFormatSupport);
     void CheckMultisampleQualityLevels(uint Format, uint SampleCount, out uint pNumQualityLevels);
-    void CheckCounterInfo(out IntPtr pCounterInfo);
+    [PreserveSig] void CheckCounterInfo(out IntPtr pCounterInfo);
     void CheckCounter(IntPtr pDesc, out int pType, out int pActiveCounters, out IntPtr szName, out uint pNameLength, out IntPtr szUnits, out uint pUnitsLength, out IntPtr szDescription, out uint pDescriptionLength);
     void CheckFeatureSupport(int Feature, IntPtr pFeatureSupportData, uint FeatureSupportDataSize);
     void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
-    void GetFeatureLevel(out int pFeatureLevel);
-    void GetCreationFlags(out uint pFlags);
+    [PreserveSig] int GetFeatureLevel();
+    [PreserveSig] uint GetCreationFlags();
     void GetDeviceRemovedReason(out int pReason);
-    void GetImmediateContext(out ID3D11DeviceContext ppImmediateContext);
+    [PreserveSig] void GetImmediateContext(out ID3D11DeviceContext ppImmediateContext);
     void SetExceptionMode(uint RaiseFlags);
-    void GetExceptionMode(out uint pRaiseFlags);
+    [PreserveSig] uint GetExceptionMode();
 }
 
 [ComImport]
@@ -125,55 +125,55 @@ interface ID3D11Device
 interface ID3D11DeviceContext : ID3D11DeviceChild
 {
     // ID3D11DeviceChild methods
-    new void GetDevice(out ID3D11Device ppDevice);
+    [PreserveSig] new void GetDevice(out ID3D11Device ppDevice);
     new void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     new void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     new void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
 
     // ID3D11DeviceContext methods
-    void VSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
-    void PSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
-    void PSSetShader(IntPtr pPixelShader, IntPtr ppClassInstances, uint NumClassInstances);
-    void PSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
-    void VSSetShader(IntPtr pVertexShader, IntPtr ppClassInstances, uint NumClassInstances);
-    void DrawIndexed(uint IndexCount, uint StartIndexLocation, int BaseVertexLocation);
-    void Draw(uint VertexCount, uint StartVertexLocation);
+    [PreserveSig] void VSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
+    [PreserveSig] void PSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
+    [PreserveSig] void PSSetShader(IntPtr pPixelShader, IntPtr ppClassInstances, uint NumClassInstances);
+    [PreserveSig] void PSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
+    [PreserveSig] void VSSetShader(IntPtr pVertexShader, IntPtr ppClassInstances, uint NumClassInstances);
+    [PreserveSig] void DrawIndexed(uint IndexCount, uint StartIndexLocation, int BaseVertexLocation);
+    [PreserveSig] void Draw(uint VertexCount, uint StartVertexLocation);
     void Map(ID3D11Resource pResource, uint Subresource, uint MapType, uint MapFlags, out D3D11_MAPPED_SUBRESOURCE pMappedResource);
-    void Unmap(ID3D11Resource pResource, uint Subresource);
-    void PSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
-    void IASetInputLayout(IntPtr pInputLayout);
-    void IASetVertexBuffers(uint StartSlot, uint NumBuffers, IntPtr ppVertexBuffers, IntPtr pStrides, IntPtr pOffsets);
-    void IASetIndexBuffer(IntPtr pIndexBuffer, uint Format, uint Offset);
-    void DrawIndexedInstanced(uint IndexCountPerInstance, uint InstanceCount, uint StartIndexLocation, int BaseVertexLocation, uint StartInstanceLocation);
-    void DrawInstanced(uint VertexCountPerInstance, uint InstanceCount, uint StartVertexLocation, uint StartInstanceLocation);
-    void GSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
-    void GSSetShader(IntPtr pShader, IntPtr ppClassInstances, uint NumClassInstances);
-    void IASetPrimitiveTopology(uint Topology);
-    void VSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
-    void VSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
-    void Begin(IntPtr pAsync);
-    void End(IntPtr pAsync);
+    [PreserveSig] void Unmap(ID3D11Resource pResource, uint Subresource);
+    [PreserveSig] void PSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
+    [PreserveSig] void IASetInputLayout(IntPtr pInputLayout);
+    [PreserveSig] void IASetVertexBuffers(uint StartSlot, uint NumBuffers, IntPtr ppVertexBuffers, IntPtr pStrides, IntPtr pOffsets);
+    [PreserveSig] void IASetIndexBuffer(IntPtr pIndexBuffer, uint Format, uint Offset);
+    [PreserveSig] void DrawIndexedInstanced(uint IndexCountPerInstance, uint InstanceCount, uint StartIndexLocation, int BaseVertexLocation, uint StartInstanceLocation);
+    [PreserveSig] void DrawInstanced(uint VertexCountPerInstance, uint InstanceCount, uint StartVertexLocation, uint StartInstanceLocation);
+    [PreserveSig] void GSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
+    [PreserveSig] void GSSetShader(IntPtr pShader, IntPtr ppClassInstances, uint NumClassInstances);
+    [PreserveSig] void IASetPrimitiveTopology(uint Topology);
+    [PreserveSig] void VSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
+    [PreserveSig] void VSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
+    [PreserveSig] void Begin(IntPtr pAsync);
+    [PreserveSig] void End(IntPtr pAsync);
     void GetData(IntPtr pAsync, IntPtr pData, uint DataSize, uint GetDataFlags);
-    void SetPredication(IntPtr pPredicate, int PredicateValue);
-    void GSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
-    void GSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
-    void OMSetRenderTargets(uint NumViews, IntPtr ppRenderTargetViews, IntPtr pDepthStencilView);
-    void OMSetRenderTargetsAndUnorderedAccessViews(uint NumRTVs, IntPtr ppRenderTargetViews, IntPtr pDepthStencilView, uint UAVStartSlot, uint NumUAVs, IntPtr ppUnorderedAccessViews, IntPtr pUAVInitialCounts);
-    void OMSetBlendState(IntPtr pBlendState, float[] BlendFactor, uint SampleMask);
-    void OMSetDepthStencilState(IntPtr pDepthStencilState, uint StencilRef);
-    void SOSetTargets(uint NumBuffers, IntPtr ppSOTargets, IntPtr pOffsets);
-    void DrawAuto();
-    void DrawIndexedInstancedIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
-    void DrawInstancedIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
-    void Dispatch(uint ThreadGroupCountX, uint ThreadGroupCountY, uint ThreadGroupCountZ);
-    void DispatchIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
-    void RSSetState(IntPtr pRasterizerState);
-    void RSSetViewports(uint NumViewports, IntPtr pViewports);
-    void RSSetScissorRects(uint NumRects, IntPtr pRects);
-    void CopySubresourceRegion(ID3D11Resource pDstResource, uint DstSubresource, uint DstX, uint DstY, uint DstZ, ID3D11Resource pSrcResource, uint SrcSubresource, IntPtr pSrcBox);
-    void CopyResource(ID3D11Resource pDstResource, ID3D11Resource pSrcResource);
+    [PreserveSig] void SetPredication(IntPtr pPredicate, int PredicateValue);
+    [PreserveSig] void GSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
+    [PreserveSig] void GSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
+    [PreserveSig] void OMSetRenderTargets(uint NumViews, IntPtr ppRenderTargetViews, IntPtr pDepthStencilView);
+    [PreserveSig] void OMSetRenderTargetsAndUnorderedAccessViews(uint NumRTVs, IntPtr ppRenderTargetViews, IntPtr pDepthStencilView, uint UAVStartSlot, uint NumUAVs, IntPtr ppUnorderedAccessViews, IntPtr pUAVInitialCounts);
+    [PreserveSig] void OMSetBlendState(IntPtr pBlendState, float[] BlendFactor, uint SampleMask);
+    [PreserveSig] void OMSetDepthStencilState(IntPtr pDepthStencilState, uint StencilRef);
+    [PreserveSig] void SOSetTargets(uint NumBuffers, IntPtr ppSOTargets, IntPtr pOffsets);
+    [PreserveSig] void DrawAuto();
+    [PreserveSig] void DrawIndexedInstancedIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
+    [PreserveSig] void DrawInstancedIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
+    [PreserveSig] void Dispatch(uint ThreadGroupCountX, uint ThreadGroupCountY, uint ThreadGroupCountZ);
+    [PreserveSig] void DispatchIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
+    [PreserveSig] void RSSetState(IntPtr pRasterizerState);
+    [PreserveSig] void RSSetViewports(uint NumViewports, IntPtr pViewports);
+    [PreserveSig] void RSSetScissorRects(uint NumRects, IntPtr pRects);
+    [PreserveSig] void CopySubresourceRegion(ID3D11Resource pDstResource, uint DstSubresource, uint DstX, uint DstY, uint DstZ, ID3D11Resource pSrcResource, uint SrcSubresource, IntPtr pSrcBox);
+    [PreserveSig] void CopyResource(ID3D11Resource pDstResource, ID3D11Resource pSrcResource);
     // Truncated for brevity, but needed
-    void UpdateSubresource(ID3D11Resource pDstResource, uint DstSubresource, IntPtr pDstBox, IntPtr pSrcData, uint SrcRowPitch, uint SrcDepthPitch);
+    [PreserveSig] void UpdateSubresource(ID3D11Resource pDstResource, uint DstSubresource, IntPtr pDstBox, IntPtr pSrcData, uint SrcRowPitch, uint SrcDepthPitch);
 }
 
 [StructLayout(LayoutKind.Sequential)]

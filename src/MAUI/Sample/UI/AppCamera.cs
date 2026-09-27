@@ -6,9 +6,6 @@ namespace CameraTests.Views
 {
     public partial class AppCamera : SkiaCamera
     {
-        private SkiaShader _effectShader;
-        private ShaderEffect _loadedEffect;
-
         public static readonly BindableProperty VideoEffectProperty = BindableProperty.Create(
             nameof(VideoEffect),
             typeof(ShaderEffect),
@@ -122,9 +119,14 @@ namespace CameraTests.Views
             }
         }
 
+        /// <summary>
+        /// An .sksl file used instead of <see cref="VideoEffect"/> when set (test runs pick shaders by file).
+        /// </summary>
+        public string CustomShaderPath { get; set; }
+
         protected override void RenderPreviewForProcessing(SKCanvas canvas, SKImage frame)
         {
-            var shader = GetEffectShader();
+            var shader = _previewEffect.Get(VideoEffect, CustomShaderPath);
             if (shader == null)
             {
                 base.RenderPreviewForProcessing(canvas, frame);
@@ -136,7 +138,7 @@ namespace CameraTests.Views
 
         protected override void RenderFrameForRecording(SKCanvas canvas, SKImage frame, SKRect src, SKRect dst)
         {
-            var shader = GetEffectShader();
+            var shader = _recordingEffect.Get(VideoEffect, CustomShaderPath);
             if (shader == null)
             {
                 base.RenderFrameForRecording(canvas, frame, src, dst);
@@ -146,39 +148,71 @@ namespace CameraTests.Views
             shader.DrawRect(canvas, frame, dst);
         }
 
-        private SkiaShader GetEffectShader()
+        // One shader instance per role: preview and recording render on different threads (and GPU contexts), and a
+        // SkiaShader keeps per-draw state (paint, uniforms, texture shader) that must not be shared between them.
+        private readonly EffectSlot _previewEffect = new(), _recordingEffect = new();
+
+        private sealed class EffectSlot
         {
-            var effect = VideoEffect;
-            if (effect == ShaderEffect.None)
+            private SkiaShader _shader;
+            private ShaderEffect _effect;
+            private string _path;
+            private bool _loaded;
+
+            public SkiaShader Get(ShaderEffect effect, string path)
             {
-                ReleaseEffectShader();
-                return null;
+                if (string.IsNullOrEmpty(path) && effect == ShaderEffect.None)
+                {
+                    Release();
+                    return null;
+                }
+
+                if (_loaded && _effect == effect && _path == path)
+                {
+                    return _shader; // null when the file could not be loaded: not retried every frame
+                }
+
+                Release();
+                _effect = effect;
+                _path = path;
+                _loaded = true;
+                try
+                {
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        _shader = SkiaShader.FromCode(File.ReadAllText(path));
+                    }
+                    else
+                    {
+                        var filename = ShaderEffectHelper.GetFilename(effect);
+                        if (!string.IsNullOrWhiteSpace(filename))
+                            _shader = SkiaShader.FromResource(filename);
+                    }
+                }
+                catch (Exception e)
+                {
+                    // a missing or broken shader file shows the plain frame instead of taking the camera down
+                    Super.Log($"[AppCamera] shader {path ?? effect.ToString()} not loaded: {e.Message}");
+                    _shader = null;
+                }
+
+                return _shader;
             }
 
-            if (_effectShader != null && _loadedEffect == effect)
+            public void Release()
             {
-                return _effectShader;
+                _shader?.Dispose();
+                _shader = null;
+                _effect = ShaderEffect.None;
+                _path = null;
+                _loaded = false;
             }
-
-            ReleaseEffectShader();
-
-            var filename = ShaderEffectHelper.GetFilename(effect);
-            if (string.IsNullOrWhiteSpace(filename))
-            {
-                return null;
-            }
-
-            _effectShader = SkiaShader.FromResource(filename);
-            _loadedEffect = effect;
-
-            return _effectShader;
         }
 
         private void ReleaseEffectShader()
         {
-            _effectShader?.Dispose();
-            _effectShader = null;
-            _loadedEffect = ShaderEffect.None;
+            _previewEffect.Release();
+            _recordingEffect.Release();
         }
 
         public override void OnWillDisposeWithChildren()

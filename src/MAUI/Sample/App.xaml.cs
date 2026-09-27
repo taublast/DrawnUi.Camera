@@ -20,7 +20,11 @@ namespace CameraTests
 
         protected override Window CreateWindow(IActivationState activationState)
         {
-            return new Window(new MainPage(Super.Services.GetService<IRealtimeTranscriptionService>()));
+            var window = new Window(new MainPage(Super.Services.GetService<IRealtimeTranscriptionService>()));
+#if WINDOWS
+            SampleAutomation.Attach(window); // inert unless the app was started with --auto-run
+#endif
+            return window;
         }
 
 

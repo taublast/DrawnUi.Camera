@@ -8,5 +8,6 @@ public enum ShaderEffect
     Wes,
     Runner,
     Desat,
-    BW
+    BW,
+    Sketch
 }

@@ -862,6 +862,11 @@ public partial class MainPage : BasePageReloadable, IDisposable
 
     private async void OnVideoRecordingSuccess(object sender, CapturedVideo capturedVideo)
     {
+#if WINDOWS
+        if (SampleAutomation.Enabled)
+            return; // test runs keep their files out of the user's gallery; the automation copies them itself
+#endif
+
         // since the display image is on the GPU surface we must access it on the GPU thread
         CameraControl.SafeAction(() => //wil be invoked when rendering canvas on GPU thread
         {

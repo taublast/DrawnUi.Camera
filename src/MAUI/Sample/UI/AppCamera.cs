@@ -125,6 +125,12 @@ namespace CameraTests.Views
         public string CustomShaderPath { get; set; }
 
         /// <summary>
+        /// Test runs: the ML input of an image through the camera's own Skia scaling (a raster image never takes a GPU
+        /// shortcut), as the reference for the pixel error of the GPU path.
+        /// </summary>
+        public bool ReferenceRgba(SKImage raster, int width, int height, byte[] buffer) => TryGetRgba(raster, width, height, buffer);
+
+        /// <summary>
         /// Called with every raw frame before the base handling (test runs check the ML input with it).
         /// </summary>
         public Action<RawCameraFrame> RawFrameProbe { get; set; }

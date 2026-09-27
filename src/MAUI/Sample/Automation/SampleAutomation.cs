@@ -33,7 +33,9 @@ namespace CameraTests;
 /// --restart-kind quality|mode|format  which setting: photo quality, capture mode (to Still), or another video format
 /// --snapshot FILE.png            preview: save the frame GetPreviewImage returns off the UI thread
 /// --snapshot-ab FOLDER           preview: snapshots GPU, CPU, GPU again within seconds (colour comparison of the paths)
-/// --raw-rgba 224x224             preview: RawCameraFrame.TryGetRgba on every 5th raw frame (success, ms, luma)
+/// --raw-rgba 224x224             preview or record: RawCameraFrame.TryGetRgba on every 5th raw frame (success, ms, luma)
+/// --check-mirror                 record with --stamp: the preview must show the recording frames (their counter is read back)
+/// --raw-rgba-check               with --raw-rgba: pixel error against the Skia path on the same frames (rotations, crop)
 /// --memory-every 10              seconds between MEM lines (private bytes, handles, GC counts)
 /// --out FOLDER                   where the recording is copied (default %TEMP%\SkiaCameraRuns)
 /// --log FILE                     log file (default FOLDER\run.log)
@@ -400,6 +402,9 @@ public static class SampleAutomation
         TaskCompletionSource<CapturedVideo> done)
     {
         cam.MeasurePaint = true; // slow paints are logged with their time
+        var rawRgba = Arg("--raw-rgba") is { } rawRecordSize ? new RawRgbaProbe(rawRecordSize, cam, false) : null;
+        if (rawRgba != null)
+            cam.RawFrameProbe = rawRgba.OnFrame; // during a recording the hook fires from the recording loop
 
         if (pre > 0)
         {
@@ -449,6 +454,30 @@ public static class SampleAutomation
             Log($"camera restart requested during the recording ({kind}): {Describe(cam)}");
             await Task.Delay(TimeSpan.FromSeconds(seconds - restartAt));
         }
+        else if (Arg("--check-mirror") != null && Arg("--stamp") != null)
+        {
+            // the preview must show the recording frames: their burnt-in counter (drawn by ProcessFrame only) is read
+            // back from what the preview displays, twice
+            var readings = new List<string>();
+            for (var i = 0; i < 2; i++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(seconds / 3));
+                var index = i;
+                readings.Add(await MainThread.InvokeOnMainThreadAsync(() =>
+                {
+                    using var shown = cam.Display?.LoadedSource?.Clone();
+                    if (shown?.Image is { } image)
+                    {
+                        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+                        File.WriteAllBytes(Path.Combine(outDir, $"preview-during-recording-{index}.png"), data.ToArray());
+                    }
+                    return ReadStamp(shown?.Image);
+                }));
+            }
+            await Task.Delay(TimeSpan.FromSeconds(seconds / 3));
+            Log($"preview shows recording stamps: {string.Join(", ", readings)}");
+            result.Append($" previewStamps={string.Join("/", readings)}");
+        }
         else
         {
             await Task.Delay(TimeSpan.FromSeconds(seconds));
@@ -490,13 +519,18 @@ public static class SampleAutomation
         }
 
         result.Append($" mode=record {report} preview={pace} uiThread={ui} file=\"{copy}\" bytes={(copy != null ? new FileInfo(copy).Length : 0)} duration={video?.Duration.TotalSeconds:0.00}");
+        if (rawRgba != null)
+        {
+            cam.RawFrameProbe = null;
+            result.Append(" rawRgba=" + rawRgba);
+        }
         return abort || copy != null ? 0 : 1;
     }
 
     static async Task<int> Preview(AppCamera cam, StringBuilder result)
     {
         var seconds = double.Parse(Arg("--seconds") ?? "10", CultureInfo.InvariantCulture);
-        var rgba = Arg("--raw-rgba") is { } rawSize ? new RawRgbaProbe(rawSize) : null;
+        var rgba = Arg("--raw-rgba") is { } rawSize ? new RawRgbaProbe(rawSize, cam, Arg("--raw-rgba-check") != null) : null;
         if (rgba != null)
             cam.RawFrameProbe = rgba.OnFrame;
         cam.MeasurePaint = true;
@@ -746,6 +780,39 @@ public static class SampleAutomation
     }
 
     /// <summary>
+    /// The 20-bit counter --stamp burns into the top row of recording frames, read from an image ("none" when the
+    /// pattern is not there: not a recording frame).
+    /// </summary>
+    static string ReadStamp(SKImage image)
+    {
+        if (image == null)
+            return "none";
+        var raster = image.IsTextureBacked ? image.ToRasterImage() : image;
+        try
+        {
+            using var bitmap = SKBitmap.FromImage(raster);
+            var b = bitmap.Width / 40f;
+            long value = 0;
+            for (var i = 0; i < 20; i++)
+            {
+                // the bottom copy of the counter: the sample's overlay dims the top one
+                var c = bitmap.GetPixel((int)(b + i * 1.5f * b + b / 2), (int)(bitmap.Height - b));
+                var luma = 0.299 * c.Red + 0.587 * c.Green + 0.114 * c.Blue;
+                if (luma > 64 && luma < 192)
+                    return "none"; // mid-grey: camera content, not a stamp cell
+                if (luma >= 192)
+                    value |= 1L << i;
+            }
+            return value.ToString(CultureInfo.InvariantCulture);
+        }
+        finally
+        {
+            if (!ReferenceEquals(raster, image))
+                raster.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Mean luma of an image on a coarse grid (-1 without pixels).
     /// </summary>
     static double MeanLuma(SKImage image)
@@ -813,14 +880,23 @@ public static class SampleAutomation
     /// <summary>
     /// --raw-rgba 224x224: RawCameraFrame.TryGetRgba on every 5th raw frame, inside the callback as the contract requires;
     /// reports successes, time per call, the calling thread and the mean luma of the bytes.
+    /// With --raw-rgba-check the same frame is also scaled through the camera's Skia path from a raster copy (the old
+    /// path, the reference) and the difference is reported per case: display orientation, the three extra rotations of
+    /// OutputOrientation.Portrait, and a centre crop of 0.6 (each case is called the same way on both sides).
     /// </summary>
-    sealed class RawRgbaProbe(string size)
+    sealed class RawRgbaProbe(string size, AppCamera cam, bool check)
     {
         readonly int _w = int.Parse(size.Split('x')[0]), _h = int.Parse(size.Split('x')[1]);
         readonly byte[] _buffer = new byte[int.Parse(size.Split('x')[0]) * int.Parse(size.Split('x')[1]) * 4];
+        readonly byte[] _reference = new byte[int.Parse(size.Split('x')[0]) * int.Parse(size.Split('x')[1]) * 4];
         long _frames, _calls, _ok;
         double _ms, _maxMs, _luma;
         bool _onUi, _offUi;
+        static readonly MethodInfo Internal = typeof(SkiaCamera).GetMethod("TryGetRgbaInternal", BindingFlags.NonPublic | BindingFlags.Instance);
+        static readonly (string Name, int DisplayRotation, float Crop, bool Portrait)[] Cases =
+            [("display", 0, 1f, false), ("rot270", 90, 1f, true), ("rot180", 180, 1f, true), ("rot90", 270, 1f, true), ("crop0.6", 0, 0.6f, false)];
+        readonly Dictionary<string, (double Sum, long Count, int Max, long Over8, long Values)> _errors = new();
+        long _checks;
 
         public void OnFrame(RawCameraFrame frame)
         {
@@ -840,10 +916,38 @@ public static class SampleAutomation
             for (var i = 0; i < _buffer.Length; i += 4 * 7)
                 sum += 0.299 * _buffer[i] + 0.587 * _buffer[i + 1] + 0.114 * _buffer[i + 2];
             _luma = sum / (_buffer.Length / (4 * 7));
+
+            if (!check || frame.RawImage == null || _checks++ % 3 != 0)
+                return;
+            // the same frame through the old path: a raster copy never takes the GPU shortcut
+            using var raster = frame.RawImage.IsTextureBacked ? frame.RawImage.ToRasterImage() : null;
+            var reference = raster ?? frame.RawImage;
+            var c = Cases[_checks / 3 % Cases.Length];
+            var orientation = c.Portrait ? OutputOrientation.Portrait : OutputOrientation.Display;
+            var gpuOk = (bool)Internal.Invoke(cam, [frame.RawImage, _w, _h, _buffer, orientation, c.Crop, c.DisplayRotation]);
+            var refOk = (bool)Internal.Invoke(cam, [reference, _w, _h, _reference, orientation, c.Crop, c.DisplayRotation]);
+            if (!gpuOk || !refOk)
+                return;
+            var e = _errors.GetValueOrDefault(c.Name);
+            for (var i = 0; i < _buffer.Length; i += 4)
+            {
+                for (var k = 0; k < 3; k++)
+                {
+                    var d = Math.Abs(_buffer[i + k] - _reference[i + k]);
+                    e.Sum += d;
+                    e.Values++;
+                    if (d > e.Max) e.Max = d;
+                    if (d > 8) e.Over8++;
+                }
+            }
+            e.Count++;
+            _errors[c.Name] = e;
         }
 
         public override string ToString() => string.Create(CultureInfo.InvariantCulture,
-            $"ok{_ok}/{_calls},avgMs{(_calls > 0 ? _ms / _calls : 0):0.00},maxMs{_maxMs:0.00},thread{(_onUi ? "UI" : "")}{(_offUi ? "Other" : "")},luma{_luma:0.0}");
+            $"ok{_ok}/{_calls},avgMs{(_calls > 0 ? _ms / _calls : 0):0.00},maxMs{_maxMs:0.00},thread{(_onUi ? "UI" : "")}{(_offUi ? "Other" : "")},luma{_luma:0.0}") +
+            (_errors.Count == 0 ? "" : " rgbaError=" + string.Join(";", _errors.Select(kv => string.Create(CultureInfo.InvariantCulture,
+                $"{kv.Key}:frames{kv.Value.Count},mean{kv.Value.Sum / Math.Max(1, kv.Value.Values):0.00},max{kv.Value.Max},over8:{100.0 * kv.Value.Over8 / Math.Max(1, kv.Value.Values):0.00}%"))));
     }
 
     [System.Runtime.InteropServices.DllImport("kernel32.dll")]

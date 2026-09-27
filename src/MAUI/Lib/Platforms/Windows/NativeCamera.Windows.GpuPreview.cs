@@ -31,7 +31,6 @@ public partial class NativeCamera
 
     volatile bool _snapshotRequested;
     SKImage _snapshot;
-    readonly ManualResetEventSlim _snapshotReady = new(false);
 
     bool _rasterNative;                      // raster path reading a compressed format (MJPG) as the decoder delivers it
     GpuRasterConversion _rasterConversion;
@@ -265,7 +264,6 @@ public partial class NativeCamera
                 {
                     _snapshotRequested = false;
                     Interlocked.Exchange(ref _snapshot, _gpuPipeline.ReadBack(slotTexture))?.Dispose();
-                    _snapshotReady.Set();
                 }
                 GpuCameraMs = Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
                 DeliverGpuFrame(cpuPixels, time);
@@ -351,21 +349,26 @@ public partial class NativeCamera
         {
             captured.Dispose(); // an image nobody took
         }
+        // while the preview mirrors a recording only the recorder's frames refresh it (MirrorRecordingToPreview decides),
+        // as on the raster path, Android and iOS
+        if (FormsControl.UseRecordingFramesForPreview && (FormsControl.IsRecording || FormsControl.IsPreRecording))
+            return;
         FormsControl.OnWindowsNativePreviewFrameBuffered();
         FormsControl.UpdatePreview();
     }
 
     /// <summary>
     /// GPU session: on the UI thread (the paint, with the UI's GL context current) the newest frame as an SKImage of that
-    /// context; on any other thread a raster copy of the next frame (camera thread readback), or null after 500 ms.
+    /// context; on any other thread a raster copy of a recent frame (camera thread readback), or null when none is buffered.
     /// </summary>
     SKImage GetGpuPreviewImage()
     {
         if (!MainThread.IsMainThread)
         {
-            _snapshotReady.Reset();
+            // as on the raster path and on Android: the buffered frame or null, never waiting, ownership to the caller;
+            // the camera thread copies the next frame for the next call
             _snapshotRequested = true;
-            return _snapshotReady.Wait(500) ? Interlocked.Exchange(ref _snapshot, null) : null;
+            return Interlocked.Exchange(ref _snapshot, null);
         }
 
         var ring = _gpuPipeline?.Ring;

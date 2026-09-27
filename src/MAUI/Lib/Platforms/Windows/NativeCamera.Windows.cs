@@ -1911,7 +1911,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             try
             {
                 if (wish.On)
-                    await StartCoreAsync();
+                    await StartCoreAsync(); // state changes still reach the control on the UI thread (the State setter posts them)
                 else
                     await StopCoreAsync(wish.Release);
             }
@@ -1924,10 +1924,11 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
                 }
                 if (_disposed)
                     continue;
-                State = CameraProcessorState.Error;
+                // as on the other platforms: logged, no OnError; a failed start or stop ends in Error, a camera lock that
+                // another instance keeps leaves the state as it is
                 Super.Log($"[NativeCameraWindows] camera {(wish.On ? "start" : "stop")} failed: {e}");
-                var message = $"Camera {(wish.On ? "start" : "stop")} failed: {e.Message}";
-                MainThread.BeginInvokeOnMainThread(() => FormsControl?.RaiseError(message));
+                if (e is not TimeoutException)
+                    State = CameraProcessorState.Error;
             }
         }
     }

@@ -704,22 +704,6 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
     #region Setup
 
-    private async Task Setup()
-    {
-        try
-        {
-            //Debug.WriteLine("[NativeCameraWindows] Starting setup...");
-            await SetupHardware();
-            //Debug.WriteLine("[NativeCameraWindows] Hardware setup completed successfully");
-            //State = CameraProcessorState.Enabled;
-        }
-        catch (Exception e)
-        {
-            Debug.WriteLine($"[NativeCameraWindows] Setup error: {e}");
-            State = CameraProcessorState.Error;
-        }
-    }
-
     /// <summary>
     /// Hands the capture device back to Windows: the frame reader and MediaCapture are what hold it, and while
     /// they live the camera counts as in use (privacy indicator, camera light, other apps refused), however
@@ -1759,88 +1743,146 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             return;
         }
 
-        try
-        {
-            //Debug.WriteLine("[NativeCameraWindows] Starting frame reader...");
-            var result = await _frameReader.StartAsync();
-            Debug.WriteLine($"[NativeCameraWindows] Frame reader start result: {result}");
+        var result = await _frameReader.StartAsync();
+        Debug.WriteLine($"[NativeCameraWindows] Frame reader start result: {result}");
 
-            if (result == MediaFrameReaderStartStatus.Success)
-            {
-                State = CameraProcessorState.Enabled;
-                //Debug.WriteLine("[NativeCameraWindows] Camera started successfully");
+        if (result != MediaFrameReaderStartStatus.Success)
+            throw new InvalidOperationException($"frame reader did not start: {result}"); // reported by the lifecycle loop
 
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    DeviceDisplay.Current.KeepScreenOn = true;
-                });
-            }
-            else
-            {
-                Debug.WriteLine($"[NativeCameraWindows] Failed to start frame reader: {result}");
-                State = CameraProcessorState.Error;
-            }
-        }
-        catch (Exception e)
+        State = CameraProcessorState.Enabled;
+
+        MainThread.BeginInvokeOnMainThread(() =>
         {
-            Debug.WriteLine($"[NativeCameraWindows] StartFrameReaderAsync error: {e}");
-            State = CameraProcessorState.Error;
-        }
+            DeviceDisplay.Current.KeepScreenOn = true;
+        });
     }
 
     #endregion
 
     #region INativeCamera Implementation
 
-    public async void Start()
+    // Start and Stop only record what the control wants; one lifecycle loop applies the wishes in call order.
+    // A restart (Stop(true) then Start) is therefore one ordered sequence: Start used to run while Stop was still
+    // awaiting the reader, and Stop then released the hardware Start had just set up (dead preview, no frames).
+    // Wishes arriving while a step runs are coalesced: the loop applies only the latest one afterwards.
+    private readonly object _lifecycleLock = new();
+    private bool _lifecycleRunning;
+    private bool _wantOn, _wantRelease;
+    private int _wantGeneration;
+    private (bool On, bool Release, int Generation) _appliedWish;
+    private volatile bool _disposed;
+
+    public void Start()
     {
-        // Acquire global lock to ensure previous camera is fully stopped
-        if (!_hasLock)
+        lock (_lifecycleLock)
         {
-            if (await _cameraLock.WaitAsync(5000))
-            {
-                _hasLock = true;
-            }
-            else
-            {
-                Debug.WriteLine("[NativeCameraWindows] FAILED to acquire camera lock - potential resource conflict");
-                return; // Abort start if lock cannot be acquired
-            }
+            _wantOn = true;
+            _wantRelease = false;
+            _wantGeneration++; // settings may have changed: every start sets the hardware up again, as before
         }
+        RunLifecycle();
+    }
 
-        try
+    public void Stop(bool force = false)
+    {
+        lock (_lifecycleLock)
         {
-            // awaited: the frame reader is created in there, and starting it before it exists was a silent
-            // no-start that only worked because callers happened to try again
-            await Setup();
-
-            if (State == CameraProcessorState.Enabled && _frameReader != null)
-            {
-                //Debug.WriteLine("[NativeCameraWindows] Camera already started");
-                return;
-            }
-
-            await StartFrameReaderAsync();
-
-            // Apply current flash modes after camera starts
-            if (State == CameraProcessorState.Enabled)
-            {
-                ApplyFlashMode();
-            }
+            _wantOn = false;
+            _wantRelease |= force;
         }
-        catch (Exception e)
+        RunLifecycle();
+    }
+
+    private void RunLifecycle()
+    {
+        lock (_lifecycleLock)
         {
-            Debug.WriteLine($"[NativeCameraWindows] Start error: {e}");
-            // Release lock if start failed
-            if (_hasLock)
+            if (_lifecycleRunning)
+                return; // the running loop picks the new wish up when its current step ends
+            _lifecycleRunning = true;
+        }
+        _ = LifecycleLoopAsync();
+    }
+
+    private async Task LifecycleLoopAsync()
+    {
+        while (true)
+        {
+            (bool On, bool Release, int Generation) wish;
+            lock (_lifecycleLock)
             {
-                _cameraLock.Release();
-                _hasLock = false;
+                wish = (_wantOn, _wantRelease, _wantGeneration);
+                if (_disposed || wish == _appliedWish)
+                {
+                    _lifecycleRunning = false;
+                    return;
+                }
+                _appliedWish = wish; // also when the step fails: a failed start is reported, not retried in a loop
+            }
+
+            try
+            {
+                if (wish.On)
+                    await StartCoreAsync();
+                else
+                    await StopCoreAsync(wish.Release);
+            }
+            catch (Exception e)
+            {
+                if (_hasLock)
+                {
+                    _cameraLock.Release();
+                    _hasLock = false;
+                }
+                if (_disposed)
+                    continue;
+                State = CameraProcessorState.Error;
+                Super.Log($"[NativeCameraWindows] camera {(wish.On ? "start" : "stop")} failed: {e}");
+                var message = $"Camera {(wish.On ? "start" : "stop")} failed: {e.Message}";
+                MainThread.BeginInvokeOnMainThread(() => FormsControl?.RaiseError(message));
             }
         }
     }
 
-    public async void Stop(bool force = false)
+    private async Task StartCoreAsync()
+    {
+        // Acquire global lock to ensure previous camera is fully stopped
+        if (!_hasLock)
+        {
+            if (!await _cameraLock.WaitAsync(5000))
+                throw new TimeoutException("the camera lock was not released within 5 s by another camera instance");
+            _hasLock = true;
+        }
+
+        // SetupHardware releases the running capture first. Saying so keeps the control's state true when a
+        // coalesced restart skips its stop step: the control was set Off meanwhile and must see On again.
+        State = CameraProcessorState.None;
+
+        // the frame reader is created and started in there
+        await SetupHardware();
+
+        if (_disposed)
+        {
+            // disposed while setting up: nothing may keep the device or the lock
+            ReleaseHardware();
+            _cameraLock.Release();
+            _hasLock = false;
+            return;
+        }
+
+        if (State == CameraProcessorState.Enabled && _frameReader != null)
+            return;
+
+        await StartFrameReaderAsync();
+
+        // Apply current flash modes after camera starts
+        if (State == CameraProcessorState.Enabled)
+        {
+            ApplyFlashMode();
+        }
+    }
+
+    private async Task StopCoreAsync(bool force)
     {
         // Only return early if we definitely don't need to do anything AND we don't hold the lock
         if (!_hasLock && State == CameraProcessorState.None && !force)
@@ -1851,33 +1893,23 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
         try
         {
-            try
+            if (_frameReader != null)
             {
-                //Debug.WriteLine("[NativeCameraWindows] Stopping frame reader...");
-                if (_frameReader != null)
-                {
-                    await _frameReader.StopAsync();
-                    //Debug.WriteLine("[NativeCameraWindows] Frame reader stopped");
-                }
-
-                State = CameraProcessorState.None;
-
-                // force means the camera is being switched off, not paused between frames: give the device
-                // back, or Windows keeps it counted as in use and the camera light stays on. Not while
-                // recording — the recording runs through the same MediaCapture.
-                if (force && !_isRecordingVideo)
-                    ReleaseHardware();
-
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    DeviceDisplay.Current.KeepScreenOn = false;
-                });
+                await _frameReader.StopAsync();
             }
-            catch (Exception e)
+
+            State = CameraProcessorState.None;
+
+            // force means the camera is being switched off, not paused between frames: give the device
+            // back, or Windows keeps it counted as in use and the camera light stays on. Not while
+            // recording — the recording runs through the same MediaCapture.
+            if (force && !_isRecordingVideo)
+                ReleaseHardware();
+
+            MainThread.BeginInvokeOnMainThread(() =>
             {
-                Debug.WriteLine($"[NativeCameraWindows] Stop error: {e}");
-                State = CameraProcessorState.Error;
-            }
+                DeviceDisplay.Current.KeepScreenOn = false;
+            });
         }
         finally
         {
@@ -3502,6 +3534,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     {
         try
         {
+            _disposed = true; // the lifecycle loop stops; the hardware is released below
             Stop();
 
             // Stop video recording if active
@@ -3527,6 +3560,16 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
 
             ReleaseCachedReadbackTexture();
+
+            // a step still running releases the lock itself when it sees _disposed
+            lock (_lifecycleLock)
+            {
+                if (!_lifecycleRunning && _hasLock)
+                {
+                    _cameraLock.Release();
+                    _hasLock = false;
+                }
+            }
         }
         catch (Exception e)
         {

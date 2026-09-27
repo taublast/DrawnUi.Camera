@@ -1272,6 +1272,8 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
             stage = "desc";
             texture.GetDesc(out D3D11_TEXTURE2D_DESC desc);
+            stage = "gpu-recording";
+            FeedGpuRecording(texturePtr, subresource, desc.Width, desc.Height, desc.Format); // the wrapper keeps texturePtr alive
             stage = "device";
             texture.GetDevice(out device);
             stage = "context";
@@ -3560,6 +3562,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
 
             ReleaseCachedReadbackTexture();
+            ReleaseGpuFrameDevice();
 
             // a step still running releases the lock itself when it sees _disposed
             lock (_lifecycleLock)

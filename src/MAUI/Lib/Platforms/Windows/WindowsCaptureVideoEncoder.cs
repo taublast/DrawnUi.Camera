@@ -255,6 +255,114 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         Debug.WriteLine($"[WindowsCaptureVideoEncoder #{_instanceId}] CONSTRUCTOR CALLED");
     }
 
+    /// <summary>
+    /// An encoder fed from the GPU: frames are composed by <paramref name="gpu"/> on its thread and reach the sink writer as
+    /// NV12 Direct3D samples on the recorder's device (hardware encoder, no readback). BeginFrame / SubmitFrameAsync must
+    /// then be called on the recorder thread. The recorder is not owned by the encoder.
+    /// </summary>
+    internal WindowsCaptureVideoEncoder(DrawnUi.Camera.Gpu.GpuRecorder gpu) : this((GRContext)null)
+    {
+        _gpu = gpu;
+    }
+
+    private readonly DrawnUi.Camera.Gpu.GpuRecorder _gpu;
+
+    /// <summary>
+    /// True when frames are composed and encoded on the GPU (see the internal constructor).
+    /// </summary>
+    public bool IsGpu => _gpu != null;
+
+    /// <summary>
+    /// GPU mode, recorder thread: converts the composed frame and writes it with the same timestamp rules as
+    /// <see cref="AddFrameAsync"/>.
+    /// </summary>
+    private void SubmitGpuFrame()
+    {
+        var timestamp = _pendingTimestamp;
+        if (IsPreRecordingMode)
+        {
+            if (_isBufferA)
+            {
+                if (_bufferAFirstTimestamp == TimeSpan.Zero || timestamp < _bufferAFirstTimestamp)
+                    _bufferAFirstTimestamp = timestamp;
+                _bufferALastTimestamp = timestamp;
+            }
+            else
+            {
+                if (_bufferBFirstTimestamp == TimeSpan.Zero || timestamp < _bufferBFirstTimestamp)
+                    _bufferBFirstTimestamp = timestamp;
+                _bufferBLastTimestamp = timestamp;
+            }
+        }
+        else if (!_hasFirstVideoFrame)
+        {
+            _firstVideoFrameTimestamp = timestamp;
+            _hasFirstVideoFrame = true;
+        }
+
+        if (!_isRecording)
+            return;
+        _totalFrameCount++;
+
+        var sample = _gpu.EndFrameSample();
+        if (sample == 0)
+        {
+            GpuSamplesUnavailable++;
+            return;
+        }
+
+        _sinkWriterSemaphore.Wait();
+        try
+        {
+            if (_sinkWriter == null || !_isRecording)
+                return;
+
+            long sampleTime = (long)(timestamp.TotalSeconds * 10_000_000L);
+            if (IsPreRecordingMode)
+            {
+                var baseTimestamp = _isBufferA ? _bufferAFirstTimestamp : _bufferBFirstTimestamp;
+                sampleTime -= (long)(baseTimestamp.TotalSeconds * 10_000_000L);
+            }
+            if (sampleTime <= _lastSampleTime100ns)
+                sampleTime = _lastSampleTime100ns + _rtDurationPerFrame;
+
+            DrawnUi.Camera.Gpu.GpuRecorder.SetSampleTimes(sample, sampleTime, _rtDurationPerFrame);
+            var managed = (global::Windows.Win32.Media.MediaFoundation.IMFSample)Marshal.GetObjectForIUnknown(sample);
+            try
+            {
+                _sinkWriter.WriteSample(_streamIndex, managed);
+            }
+            finally
+            {
+                Marshal.ReleaseComObject(managed);
+            }
+
+            _lastSampleTime100ns = sampleTime;
+            EncodedFrameCount++;
+            EncodingDuration = DateTime.Now - _startTime;
+            EncodingStatus = "Encoding";
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[WindowsCaptureVideoEncoder #{_instanceId}] GPU WriteSample failed: {ex.Message}");
+        }
+        finally
+        {
+            _sinkWriterSemaphore.Release();
+            DrawnUi.Camera.Gpu.GpuRecorder.ReleaseSample(sample);
+        }
+    }
+
+    /// <summary>
+    /// GPU mode: the transforms the sink writer uses for the video stream (converter, encoder, hardware or software).
+    /// </summary>
+    public string VideoTransforms { get; private set; }
+
+    /// <summary>
+    /// GPU mode: frames dropped because the encoder held every NV12 sample.
+    /// </summary>
+    public long GpuSamplesUnavailable { get; private set; }
+
 
     public bool IsRecording => _isRecording;
 
@@ -282,7 +390,16 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
             fixed (char* p = path)
             {
                 // Create attributes for Sink Writer
-                PInvoke.MFCreateAttributes(out var attributes, 1);
+                PInvoke.MFCreateAttributes(out var attributes, 2);
+
+                // GPU mode: the encoder works on the recorder's device and takes its NV12 samples as they are
+                if (_gpu != null)
+                {
+                    unsafe
+                    {
+                        attributes.SetUnknown(DrawnUi.Camera.Gpu.MfGuids.MF_SINK_WRITER_D3D_MANAGER, Marshal.GetObjectForIUnknown((nint)_gpu.DeviceManager));
+                    }
+                }
 
                 // Allow MFReadWrite to use whatever transforms (software or
                 // hardware) the system exposes for the selected output type.
@@ -376,6 +493,8 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                 CreateSinkWriterInternal(path);
                 ConfigureH264OutputAndRGB32Input();
                 _sinkWriter.BeginWriting();
+                if (_gpu != null && !AudioOnly)
+                    VideoTransforms = DrawnUi.Camera.Gpu.GpuRecorder.DescribeTransforms(_sinkWriter, _streamIndex);
             });
 
             _isRecording = true;
@@ -401,6 +520,8 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                 CreateSinkWriterInternal(path);
                 ConfigureH264OutputAndRGB32Input();
                 _sinkWriter.BeginWriting();
+                if (_gpu != null && !AudioOnly)
+                    VideoTransforms = DrawnUi.Camera.Gpu.GpuRecorder.DescribeTransforms(_sinkWriter, _streamIndex);
             });
         }
     }
@@ -416,6 +537,13 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         lock (_frameLock)
         {
             _pendingTimestamp = timestamp;
+
+            if (_gpu != null)
+            {
+                canvas = _isRecording ? _gpu.BeginFrame(_width, _height) : null;
+                info = new SKImageInfo(_width, _height, SKColorType.Bgra8888, SKAlphaType.Premul);
+                return new FrameScope(_frameGate);
+            }
 
             EnsureGpuSurfaceLocked();
 
@@ -452,6 +580,12 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
     /// </summary>
     public async Task SubmitFrameAsync()
     {
+        if (_gpu != null)
+        {
+            SubmitGpuFrame(); // synchronous on the recorder thread: no readback, no preview copy
+            return;
+        }
+
         SKImage snapshot = null;
         try
         {
@@ -2469,11 +2603,31 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                 Marshal.ReleaseComObject(outType);
             }
 
-            // Configure INPUT type (RGB32)
+            // Configure INPUT type (RGB32, or NV12 Direct3D samples from the GPU recorder)
             hr = PInvoke.MFCreateMediaType(out var inType);
             if (hr.Failed)
                 throw new InvalidOperationException($"MFCreateMediaType(in) failed: 0x{hr.Value:X8}");
 
+            if (_gpu != null)
+            {
+                try
+                {
+                    inType.SetGUID(MFGuids.MF_MT_MAJOR_TYPE, MFGuids.MFMediaType_Video);
+                    inType.SetGUID(MFGuids.MF_MT_SUBTYPE, DrawnUi.Camera.Gpu.MfGuids.MFVideoFormat_NV12);
+                    SetAttributeSize(inType, MFGuids.MF_MT_FRAME_SIZE, (uint)_width, (uint)_height);
+                    SetAttributeRatio(inType, MFGuids.MF_MT_FRAME_RATE, (uint)_frameRate, 1);
+                    SetAttributeRatio(inType, MFGuids.MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+                    inType.SetUINT32(MFGuids.MF_MT_INTERLACE_MODE, 2);
+                    inType.SetUINT32(DrawnUi.Camera.Gpu.MfGuids.MF_MT_YUV_MATRIX, 1);          // BT.709, what the video processor writes
+                    inType.SetUINT32(DrawnUi.Camera.Gpu.MfGuids.MF_MT_VIDEO_NOMINAL_RANGE, 2); // 16-235
+                    _sinkWriter.SetInputMediaType(_streamIndex, inType, null);
+                }
+                finally
+                {
+                    Marshal.ReleaseComObject(inType);
+                }
+            }
+            else
             try
             {
                 inType.SetGUID(MFGuids.MF_MT_MAJOR_TYPE, MFGuids.MFMediaType_Video);

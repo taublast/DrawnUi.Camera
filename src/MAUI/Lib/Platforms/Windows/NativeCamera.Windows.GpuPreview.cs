@@ -137,6 +137,35 @@ public partial class NativeCamera
 
     string _loggedPreviewPath;
 
+    // ML input (RawCameraFrame.TryGetRgba) of GPU frames
+    SKImage _uiImage;                        // render thread: the image handed out last, and where it came from
+    int _uiSlot = -1;
+    ulong _uiFrame;
+    volatile object _rgbaWanted;             // GpuRgbaScaler.Request (boxed: set on the render thread, read on the camera thread)
+    long _rgbaWantedAt;                      // _gpuFramesDone when it was last asked for
+    long _gpuFramesDone;                     // camera thread
+
+    /// <summary>
+    /// Render thread, inside the raw-frame callback of a GPU frame: RGBA8888 of that same frame, scaled, centre-cropped and
+    /// rotated by the video processor on the camera's device. The camera thread prepares it for every frame while a
+    /// consumer keeps asking, so here it is normally only a copy of the finished result; the first frame of a new size or
+    /// crop is scaled right away. False when the image is not the GPU frame handed out last, or the D3D path failed (the
+    /// caller then scales it with Skia).
+    /// </summary>
+    internal bool TryGetGpuRgba(SKImage rawImage, int width, int height, int rotation, float cropRatio, byte[] buffer)
+    {
+        if (!_gpuCapture || rawImage == null || !ReferenceEquals(rawImage, _uiImage))
+            return false;
+        var pipeline = _gpuPipeline;
+        var ring = _previewView?.Ring;
+        if (pipeline == null || ring == null)
+            return false;
+        var request = new GpuRgbaScaler.Request(width, height, rotation, cropRatio);
+        _rgbaWanted = request;
+        Volatile.Write(ref _rgbaWantedAt, Volatile.Read(ref _gpuFramesDone));
+        return pipeline.ReadRgba(ring, _uiSlot, _uiFrame, request, buffer);
+    }
+
     void LogPreviewPath(string path, string detail)
     {
         var message = $"[NativeCameraWindows] preview on {path}: {detail}";
@@ -201,9 +230,14 @@ public partial class NativeCamera
             }
             try
             {
-                _gpuPipeline ??= new GpuCapturePipeline();
+                _gpuPipeline ??= new GpuCapturePipeline { RgbaFailed = reason => Super.Log($"[NativeCameraWindows] ML input scaled on the render thread: {reason}", LogLevel.Information) };
                 var time = DateTime.UtcNow;
-                var failure = _gpuPipeline.Process(texture, subresource, _frameRange, _frameMatrix, _uiAdapter.Value, time, out var slot, out var slotTexture);
+                // ML input of this frame, prepared while a consumer keeps asking (it stops a second after the last request)
+                var rgba = _rgbaWanted as GpuRgbaScaler.Request?;
+                if (rgba != null && _gpuFramesDone - Volatile.Read(ref _rgbaWantedAt) > 30)
+                    rgba = null;
+                var failure = _gpuPipeline.Process(texture, subresource, _frameRange, _frameMatrix, _uiAdapter.Value, time, rgba, out var slot, out var slotTexture);
+                _gpuFramesDone++;
                 if (failure != null)
                 {
                     DisableGpuCapture(failure);
@@ -347,7 +381,15 @@ public partial class NativeCamera
                 return null;
             }
         }
-        return _previewView.TakeLatest(GetExistingGRContext(), out _);
+        var image = _previewView.TakeLatest(GetExistingGRContext(), out _, out var slot, out var frame);
+        if (image != null)
+        {
+            // the raw-frame callback gets this image next: its ML input is read from the same slot and frame
+            _uiImage = image;
+            _uiSlot = slot;
+            _uiFrame = frame;
+        }
+        return image;
     }
 
     /// <summary>

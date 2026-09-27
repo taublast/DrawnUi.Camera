@@ -104,15 +104,18 @@ internal sealed unsafe class GpuPreviewView : IDisposable
     /// <summary>
     /// UI thread, inside the paint with <paramref name="gr"/>'s context current: the newest frame as an SKImage of that
     /// context (the caller owns and disposes the image; the texture stays with the view), or null when nothing is newer.
+    /// <paramref name="slot"/> and <paramref name="frame"/> identify the ring slot and the frame in it.
     /// </summary>
-    public SKImage TakeLatest(GRContext gr, out DateTime time)
+    public SKImage TakeLatest(GRContext gr, out DateTime time, out int slot, out ulong frame)
     {
         time = default;
+        slot = -1;
+        frame = 0;
         if (gr == null)
             return null;
         if (!ReferenceEquals(gr, _gr))
             Bind(gr);
-        if (!Ring.TakeLatest(_context4, _produced, _consumed, ref _frame, out var slot, out time))
+        if (!Ring.TakeLatest(_context4, _produced, _consumed, ref _frame, out slot, out time, out frame))
             return null;
         using var backend = new GRBackendTexture(Ring.Width, Ring.Height, false, new GRGlTextureInfo(Angle.GL_TEXTURE_2D, _gl[slot], Angle.GL_BGRA8_EXT));
         return SKImage.FromTexture(gr, backend, GRSurfaceOrigin.TopLeft, SKColorType.Bgra8888, SKAlphaType.Premul);

@@ -168,6 +168,9 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
     public GpuDevices.Adapter? FrameAdapter { get; private set; }
     ID3D11Device* _frameDevice; // AddRef'd
     GpuFrameConverter _converter;
+    GpuRgbaScaler _rgba;
+    string _rgbaFailure;
+    readonly object _lifetime = new(); // the render thread reads ML input while the camera thread may replace the ring
     readonly System.Diagnostics.Stopwatch _age = System.Diagnostics.Stopwatch.StartNew();
 
     /// <summary>True when the frames arrive on this device (the one we gave Media Foundation).</summary>
@@ -176,9 +179,11 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
     /// <summary>
     /// Converts one frame into a free ring slot and publishes it. Returns null on success (slot -1 when every slot was still
     /// in use and the frame was skipped), or why the frame cannot be used on the GPU (another adapter than the UI's).
+    /// With <paramref name="rgba"/> the ML input of that frame is queued too, before the frame is published, so it is
+    /// ready when the frame is drawn.
     /// </summary>
     public string Process(nint texture, uint subresource, int nominalRange, int yuvMatrix, GpuDevices.Adapter uiAdapter, DateTime time,
-        out int slot, out nint slotTexture)
+        GpuRgbaScaler.Request? rgba, out int slot, out nint slotTexture)
     {
         slot = -1;
         slotTexture = 0;
@@ -206,11 +211,15 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
             source->GetDesc(&desc);
             if (Ring == null || Ring.Width != desc.Width || Ring.Height != desc.Height)
             {
-                _converter.ReleaseTargets();
-                Ring?.Dispose();
-                Ring = GpuFrameRing.Create(device, (int)desc.Width, (int)desc.Height, out var reason);
-                if (Ring == null)
-                    return reason;
+                lock (_lifetime)
+                {
+                    _converter.ReleaseTargets();
+                    _rgba?.ReleaseInputs();
+                    Ring?.Dispose();
+                    Ring = GpuFrameRing.Create(device, (int)desc.Width, (int)desc.Height, out var reason);
+                    if (Ring == null)
+                        return reason;
+                }
             }
 
             if (!Ring.TryAcquireSlot(out slot, out var target))
@@ -219,6 +228,19 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
                 return null;
             }
             _converter.Convert(source, subresource, nominalRange, yuvMatrix, target);
+            if (rgba is { } request && _rgbaFailure == null)
+            {
+                try
+                {
+                    _rgba ??= new GpuRgbaScaler(device);
+                    _rgba.Prepare(slot, target, request, Ring.NextFrame);
+                }
+                catch (Exception e)
+                {
+                    _rgbaFailure = e.Message; // the ML input goes back to the render thread's path; the preview is not affected
+                    RgbaFailed?.Invoke(_rgbaFailure);
+                }
+            }
             Ring.Publish(slot, time);
             slotTexture = (nint)target;
             return null;
@@ -229,6 +251,40 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
         }
     }
 
+    /// <summary>Raised once, on the camera thread, when the ML input cannot be prepared on this device.</summary>
+    public Action<string> RgbaFailed;
+
+    /// <summary>
+    /// Raw-frame callback (render thread): the ML input of the frame in <paramref name="slot"/>, prepared on the camera
+    /// thread, or scaled right now for the first frame of a new request. False when the D3D path is not available.
+    /// </summary>
+    public bool ReadRgba(GpuFrameRing ring, int slot, ulong frame, GpuRgbaScaler.Request request, byte[] buffer)
+    {
+        lock (_lifetime)
+            return ReadRgbaLocked(ring, slot, frame, request, buffer);
+    }
+
+    bool ReadRgbaLocked(GpuFrameRing ring, int slot, ulong frame, GpuRgbaScaler.Request request, byte[] buffer)
+    {
+        if (_rgbaFailure != null || slot < 0 || ring == null || !ReferenceEquals(ring, Ring))
+            return false; // the frame's ring was replaced meanwhile
+        try
+        {
+            var scaler = _rgba;
+            if (scaler != null && scaler.TryRead(slot, request, frame, buffer))
+                return true;
+            if (scaler == null)
+                return false; // the camera thread creates it with the first request
+            return scaler.PrepareAndRead(slot, ring.SlotTexture(slot), request, frame, buffer);
+        }
+        catch (Exception e)
+        {
+            _rgbaFailure = e.Message;
+            RgbaFailed?.Invoke(_rgbaFailure);
+            return false;
+        }
+    }
+
     /// <summary>
     /// Camera thread: a raster copy of a ring slot, for consumers that need CPU pixels.
     /// </summary>
@@ -236,10 +292,15 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
 
     void ReleaseDevice()
     {
+        lock (_lifetime)
+        {
+            _rgba?.Dispose();
+            _rgba = null;
+            Ring?.Dispose();
+            Ring = null;
+        }
         _converter?.Dispose();
         _converter = null;
-        Ring?.Dispose();
-        Ring = null;
         if (_frameDevice != null)
             _frameDevice->Release();
         _frameDevice = null;

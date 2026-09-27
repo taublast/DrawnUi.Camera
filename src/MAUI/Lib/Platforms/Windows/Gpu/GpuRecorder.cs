@@ -269,7 +269,7 @@ internal sealed unsafe class GpuRecorder : IDisposable
     {
         time = default;
         var ring = _ring;
-        if (ring == null || !ring.TakeLatest(_context4, _produced, _consumed, ref _consumerFrame, out var slot, out time))
+        if (ring == null || !ring.TakeLatest(_context4, _produced, _consumed, ref _consumerFrame, out var slot, out time, out _))
             return null;
         return _ringImages[slot];
     }

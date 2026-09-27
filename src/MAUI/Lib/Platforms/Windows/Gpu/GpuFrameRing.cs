@@ -210,6 +210,18 @@ internal sealed unsafe class GpuFrameRing : IDisposable
         }
     }
 
+    /// <summary>
+    /// Producer: the publish counter the next <see cref="Publish"/> gives its frame (frame identity for per-frame work).
+    /// </summary>
+    public ulong NextFrame
+    {
+        get
+        {
+            lock (_lock)
+                return _published + 1;
+        }
+    }
+
     /// <summary>A slot's texture on the producer's device.</summary>
     public ID3D11Texture2D* SlotTexture(int slot) => _textures[slot];
 
@@ -219,12 +231,13 @@ internal sealed unsafe class GpuFrameRing : IDisposable
     /// False when there is nothing newer than the slot already held.
     /// </summary>
     public bool TakeLatest(ID3D11DeviceContext4* consumerContext, ID3D11Fence* produced, ID3D11Fence* consumed, ref ulong consumerFrame,
-        out int slot, out DateTime time)
+        out int slot, out DateTime time, out ulong frame)
     {
         consumerFrame++;
         int oldHeld = -1, newSlot = -1;
         ulong counter = 0;
         time = default;
+        frame = 0;
         lock (_lock)
         {
             if (_latest >= 0 && _latest != _held)
@@ -238,6 +251,7 @@ internal sealed unsafe class GpuFrameRing : IDisposable
             }
         }
         slot = newSlot;
+        frame = counter;
         if (newSlot < 0)
             return false;
         if (oldHeld >= 0)

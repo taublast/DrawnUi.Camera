@@ -1667,6 +1667,11 @@ public partial class SkiaCamera : SkiaControl
         if (outputBuffer == null || outputBuffer.Length < required)
             return false;
 
+        // a frame of the GPU preview: its scaled copy was prepared by the video processor on the camera thread
+        if (NativeControl is NativeCamera gpuCamera &&
+            gpuCamera.TryGetGpuRgba(rawImage, targetWidth, targetHeight, outputRotation, cropRatio, outputBuffer))
+            return true;
+
         var info = new SKImageInfo(targetWidth, targetHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
 
         // Try GPU-backed surface using encoder's GRContext; a frame of the GPU preview is a texture of the UI's context

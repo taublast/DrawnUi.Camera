@@ -97,6 +97,26 @@ public partial class SkiaCamera : SkiaControl
         System.Threading.Interlocked.Increment(ref _diagHardwareDrops);
     }
 
+    /// <summary>
+    /// Disposal: a running recording is aborted before anything is torn down, and its frame composition is waited for
+    /// (bounded). RenderFrameForRecording and ProcessFrame run on a recording thread and may use what this control or a
+    /// subclass releases while disposing. A camera that is not recording is not affected.
+    /// </summary>
+    partial void OnWillDisposeWhileRecording()
+    {
+        if (!IsRecording && !IsPreRecording)
+            return;
+        try
+        {
+            if (!Task.Run(() => StopVideoRecording(true)).Wait(TimeSpan.FromSeconds(3)))
+                Super.Log("[SkiaCamera] recording abort before dispose did not finish within 3 s");
+        }
+        catch (Exception e)
+        {
+            Super.Log($"[SkiaCamera] recording abort before dispose failed: {e.Message}");
+        }
+    }
+
     private void ResetWindowsRecordingQueue()
     {
         var pending = System.Threading.Interlocked.Exchange(ref _windowsPendingRecordingFrame, null);

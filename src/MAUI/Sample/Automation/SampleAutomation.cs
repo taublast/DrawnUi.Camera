@@ -25,6 +25,7 @@ namespace CameraTests;
 /// --seconds 10                   recording or preview duration
 /// --pre-record 0                 seconds of pre-recording before the live recording starts
 /// --audio on|off                 record audio (default on)
+/// --mirror-refresh on|off        SkiaCamera.MirrorRecordingToPreview (default on)
 /// --stop stop|abort              how the recording ends
 /// --after-seconds 0              stay in preview this long after the recording (memory lines keep coming)
 /// --repeat 1                     record (photo: take) this many times in a row
@@ -212,7 +213,7 @@ public static class SampleAutomation
                 }
             };
             cam.OnError += (_, e) => Log("OnError " + e);
-            cam.StateChanged += (_, st) => Log("State " + st);
+            cam.StateChanged += (_, st) => Log($"State {st}{(MainThread.IsMainThread ? " (UI thread)" : $" (thread {Environment.CurrentManagedThreadId})")}");
             var progressLogged = false;
             cam.RecordingProgress += (_, d) =>
             {
@@ -362,6 +363,8 @@ public static class SampleAutomation
                 cam.VideoQuality = Enum.Parse<VideoQuality>(quality, true);
             if (audio != null)
                 cam.EnableAudioRecording = audio.Equals("on", StringComparison.OrdinalIgnoreCase);
+            if (Arg("--mirror-refresh") is { } refresh)
+                cam.MirrorRecordingToPreview = refresh.Equals("on", StringComparison.OrdinalIgnoreCase);
             if (shader != null)
             {
                 if (shader.EndsWith(".sksl", StringComparison.OrdinalIgnoreCase))

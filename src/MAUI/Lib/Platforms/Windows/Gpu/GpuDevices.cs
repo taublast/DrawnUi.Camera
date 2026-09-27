@@ -10,7 +10,7 @@ using static TerraFX.Interop.Windows.Windows;
 /// adapter that counts is the one ANGLE renders the UI on: our devices are created on it explicitly (by LUID), so a laptop
 /// with two GPUs does not end up with the camera, the recorder and the UI on different ones.
 /// </summary>
-internal static unsafe class GpuDevices
+internal static class GpuDevices
 {
     /// <summary>
     /// An adapter by identity, with the name for logs.
@@ -25,7 +25,7 @@ internal static unsafe class GpuDevices
     /// <summary>
     /// The adapter a D3D11 device was created on.
     /// </summary>
-    public static Adapter? AdapterOf(ID3D11Device* device)
+    public static unsafe Adapter? AdapterOf(ID3D11Device* device)
     {
         if (device == null)
             return null;
@@ -51,40 +51,40 @@ internal static unsafe class GpuDevices
 
     /// <summary>
     /// The adapter ANGLE renders the UI on: the display current on the UI thread (DrawnUi keeps its context current there).
-    /// Call on the UI thread. Null with a reason when it cannot be determined.
+    /// Only that one query runs on the UI thread; loading ANGLE's entry points and reading the adapter run on the pool, so
+    /// first use costs the UI nothing. Null with a reason when it cannot be determined.
     /// </summary>
-    public static Adapter? UiAdapter(out string reason)
+    public static async Task<(Adapter? Adapter, string Reason)> UiAdapterAsync()
     {
-        reason = null;
-        var missing = Angle.Load();
+        var missing = await Task.Run(() =>
+        {
+            var lacking = Angle.Load();
+            if (lacking == null)
+                Angle.eglGetCurrentDisplay(); // binds the import here rather than on the UI thread
+            return lacking;
+        });
         if (missing != null)
-        {
-            reason = $"ANGLE lacks {missing}";
-            return null;
-        }
-        var display = Angle.eglGetCurrentDisplay();
+            return (null, $"ANGLE lacks {missing}");
+        var display = await MainThread.InvokeOnMainThreadAsync(Angle.eglGetCurrentDisplay);
         if (display == 0)
-        {
-            reason = "no ANGLE display is current on the UI thread (canvas not accelerated or not drawn yet)";
-            return null;
-        }
+            return (null, "no ANGLE display is current on the UI thread (canvas not accelerated or not drawn yet)");
+        return await Task.Run(() => AdapterOfDisplay(display));
+    }
+
+    static unsafe (Adapter? Adapter, string Reason) AdapterOfDisplay(nint display)
+    {
         var device = Angle.DeviceOfDisplay(display);
         if (device == null)
-        {
-            reason = "ANGLE does not expose its D3D11 device (EGL_EXT_device_query)";
-            return null;
-        }
+            return (null, "ANGLE does not expose its D3D11 device (EGL_EXT_device_query)");
         var adapter = AdapterOf(device);
-        if (adapter == null)
-            reason = "the adapter of ANGLE's device could not be read";
-        return adapter;
+        return (adapter, adapter == null ? "the adapter of ANGLE's device could not be read" : null);
     }
 
     /// <summary>
     /// A D3D11 device of our own on the adapter with this LUID: BGRA and video support, multithread protected (Media
     /// Foundation uses it from its own threads). Returns the device with its immediate context.
     /// </summary>
-    public static ID3D11Device* CreateDevice(Adapter adapter, out ID3D11DeviceContext* context)
+    public static unsafe ID3D11Device* CreateDevice(Adapter adapter, out ID3D11DeviceContext* context)
     {
         context = null;
         IDXGIFactory4* factory = null;
@@ -123,7 +123,7 @@ internal static unsafe class GpuDevices
     /// <summary>
     /// The software adapter (Microsoft Basic Render Driver). Only for tests that need a second adapter on a one-GPU machine.
     /// </summary>
-    public static Adapter? WarpAdapter()
+    public static unsafe Adapter? WarpAdapter()
     {
         IDXGIFactory4* factory = null;
         IDXGIAdapter* adapter = null;
@@ -147,10 +147,31 @@ internal static unsafe class GpuDevices
     }
 
     /// <summary>
-    /// Test-only: DRAWNUI_CAMERA_TEST_ADAPTER=warp makes the GPU path treat the software adapter as the UI's, to exercise the
-    /// adapter-mismatch detection and the CPU fallback without a second GPU. Unset in normal use.
+    /// Test-only: DRAWNUI_CAMERA_TEST_ADAPTER=warp puts our capture device on the software adapter, so camera frames arrive
+    /// on another adapter than the UI's: exercises the mismatch detection and the preview's CPU fallback without a second
+    /// GPU. Unset in normal use.
     /// </summary>
-    public static readonly bool TestWarp = string.Equals(Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_ADAPTER"), "warp", StringComparison.OrdinalIgnoreCase);
+    public static readonly bool TestWarpCapture = string.Equals(Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_ADAPTER"), "warp", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Test-only: DRAWNUI_CAMERA_TEST_ADAPTER=warp-ui makes the recording treat the software adapter as the UI's: exercises
+    /// the recording's CPU fallback while the preview stays on the GPU. Unset in normal use.
+    /// </summary>
+    public static readonly bool TestWarpUi = string.Equals(Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_ADAPTER"), "warp-ui", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Test-only: DRAWNUI_CAMERA_TEST_ADAPTER=warp-ui-preview makes the preview treat the software adapter as the UI's: our
+    /// capture device cannot be made there (no video support), Media Foundation's own device lands on the real GPU, and the
+    /// frames' adapter no longer matches: exercises the whole cascade down to the preview's CPU fallback. Unset in normal use.
+    /// </summary>
+    public static readonly bool TestWarpUiPreview = string.Equals(Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_ADAPTER"), "warp-ui-preview", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Test-only: DRAWNUI_CAMERA_TEST_DEVICE_LOST=5 makes the preview's frame conversion fail the way a removed device does
+    /// (DXGI_ERROR_DEVICE_REMOVED) 5 seconds after its first frame: exercises the fallback and the cleanup. Unset in normal use.
+    /// </summary>
+    public static readonly double TestDeviceLostAfter = double.TryParse(Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_DEVICE_LOST"),
+        System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds) ? seconds : -1;
 
     public static void ThrowIfFailed(HRESULT hr, string what)
     {

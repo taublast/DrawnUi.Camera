@@ -145,31 +145,50 @@ internal sealed unsafe class GpuFrameRing : IDisposable
     /// </summary>
     public bool Produce(ID3D11Texture2D* source, uint subresource, DateTime time)
     {
-        int slot;
-        ulong lastUse, counter;
+        if (!TryAcquireSlot(out var slot, out var target))
+            return false;
+        _context->CopySubresourceRegion((ID3D11Resource*)target, 0, 0, 0, 0, (ID3D11Resource*)source, subresource, null);
+        Publish(slot, time);
+        return true;
+    }
+
+    /// <summary>
+    /// Producer: a slot the consumer is done with, to be written on the producer's device and then <see cref="Publish"/>ed.
+    /// The consumer signals "consumed" once its GPU work on a slot is done; when that has not happened yet the frame is
+    /// skipped instead of GPU-waiting, because a wait here would stall the camera's device, and with it the preview, behind
+    /// the consumer's GPU (a hardware encoder starting up held it for up to 0.9 s).
+    /// </summary>
+    public bool TryAcquireSlot(out int slot, out ID3D11Texture2D* texture)
+    {
+        ulong lastUse;
+        texture = null;
         lock (_lock)
         {
+            slot = -1;
             if (_disposed)
                 return false;
             slot = _latest != 0 && _held != 0 ? 0 : _latest != 1 && _held != 1 ? 1 : 2;
             lastUse = _lastUse[slot];
         }
-
-        // The consumer signals "consumed" once its GPU work on a slot is done. When that has not happened yet the frame is
-        // skipped instead of GPU-waiting: a wait here would stall the camera's device, and with it the preview, behind the
-        // consumer's GPU (a hardware encoder starting up held it for up to 0.9 s).
         if (_consumed->GetCompletedValue() < lastUse)
         {
             Interlocked.Increment(ref _skipped);
             return false;
         }
+        texture = _textures[slot];
+        return true;
+    }
 
+    /// <summary>
+    /// Producer: the slot written after <see cref="TryAcquireSlot"/> becomes the latest frame.
+    /// </summary>
+    public void Publish(int slot, DateTime time)
+    {
+        ulong counter;
         lock (_lock)
             counter = ++_published;
-        _context->CopySubresourceRegion((ID3D11Resource*)_textures[slot], 0, 0, 0, 0, (ID3D11Resource*)source, subresource, null);
         _context4->Signal(_produced, counter);
         _context->Flush();
-
         lock (_lock)
         {
             _counter[slot] = counter;
@@ -177,8 +196,22 @@ internal sealed unsafe class GpuFrameRing : IDisposable
             _latest = slot;
         }
         FrameReady.Set();
-        return true;
     }
+
+    /// <summary>
+    /// Producer: the slot most recently published, -1 before the first frame.
+    /// </summary>
+    public int LatestSlot
+    {
+        get
+        {
+            lock (_lock)
+                return _latest;
+        }
+    }
+
+    /// <summary>A slot's texture on the producer's device.</summary>
+    public ID3D11Texture2D* SlotTexture(int slot) => _textures[slot];
 
     /// <summary>
     /// Consumer, its own thread: switches to the latest produced slot. Releases the previously held slot by signalling

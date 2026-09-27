@@ -11,12 +11,25 @@ namespace DrawnUi.Camera;
 /// </summary>
 public partial class SkiaCamera
 {
+    public static readonly BindableProperty UseGpuProcessingProperty = BindableProperty.Create(
+        nameof(UseGpuProcessing),
+        typeof(bool),
+        typeof(SkiaCamera),
+        true,
+        propertyChanged: NeedRestart);
+
     /// <summary>
-    /// Windows: compose and encode recording frames on the GPU when the machine allows it (default true). When it does not
-    /// (no accelerated canvas, camera frames on another adapter than the UI, missing driver features) the raster path is used
-    /// and <see cref="RecordingReport"/> says why. Read when a recording starts. PROVISIONAL name.
+    /// Windows: process camera frames on the GPU when the machine allows it (default true): the preview is converted and
+    /// drawn without a CPU copy, and recordings are composed and encoded on the GPU. When it does not (no accelerated canvas,
+    /// camera frames on another adapter than the UI, missing driver features) the raster path is used, the reason is logged
+    /// once, and <see cref="RecordingReport"/> says why for recordings. Changing it while the camera is on restarts the
+    /// camera; a recording reads it when it starts. PROVISIONAL name.
     /// </summary>
-    public bool UseGpuProcessing { get; set; } = true;
+    public bool UseGpuProcessing
+    {
+        get => (bool)GetValue(UseGpuProcessingProperty);
+        set => SetValue(UseGpuProcessingProperty, value);
+    }
 
     /// <summary>
     /// Windows: how the current or last recording was produced (path, adapters, fallback reason, frame counts).
@@ -56,9 +69,8 @@ public partial class SkiaCamera
                 reason = "no native camera";
             else
             {
-                string uiReason = null;
-                var ui = await MainThread.InvokeOnMainThreadAsync(() => GpuDevices.UiAdapter(out uiReason));
-                if (GpuDevices.TestWarp && ui != null)
+                var (ui, uiReason) = await GpuDevices.UiAdapterAsync();
+                if (GpuDevices.TestWarpUi && ui != null)
                     ui = GpuDevices.WarpAdapter(); // test: pretend the UI renders on the software adapter
                 report.UiAdapter = ui?.ToString();
                 if (ui == null)

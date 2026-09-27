@@ -68,6 +68,8 @@ public partial class SkiaCamera : SkiaControl
     private void ResumeWindowsPreviewAfterStop()
     {
         UseRecordingFramesForPreview = false;
+        if (NativeControl is NativeCamera cpuFramesCam)
+            cpuFramesCam.CpuFramesWanted = false;
 
         if (NativeControl is not NativeCamera winCam)
         {
@@ -1215,6 +1217,10 @@ public partial class SkiaCamera : SkiaControl
         // so ProcessPreview can be skipped, eliminating duplicate GPU overlay work.
         UseRecordingFramesForPreview = true;
 
+        // the raster recorder composes from CPU pixels: a GPU preview then also reads each frame back
+        if (NativeControl is NativeCamera cpuCam)
+            cpuCam.CpuFramesWanted = true;
+
         // Mirror encoder preview to on-screen display (like Apple implementation)
         if (MirrorRecordingToPreview && _captureVideoEncoder is WindowsCaptureVideoEncoder winEncPreview)
         {
@@ -1643,9 +1649,12 @@ public partial class SkiaCamera : SkiaControl
 
         var info = new SKImageInfo(targetWidth, targetHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
 
-        // Try GPU-backed surface using encoder's GRContext
+        // Try GPU-backed surface using encoder's GRContext; a frame of the GPU preview is a texture of the UI's context
+        // (this runs in the paint): scale it there and read back only the small result
         GRContext grContext = null;
-        if (_captureVideoEncoder is WindowsCaptureVideoEncoder winEnc)
+        if (rawImage.IsTextureBacked)
+            grContext = Superview?.GetGRContext();
+        else if (_captureVideoEncoder is WindowsCaptureVideoEncoder winEnc)
             grContext = winEnc.Context;
 
         SKSurface surface = grContext != null

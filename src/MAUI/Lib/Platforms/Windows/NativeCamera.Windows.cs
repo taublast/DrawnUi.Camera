@@ -727,6 +727,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             _frameSource = null;
             _mediaCapture?.Dispose();
             _mediaCapture = null;
+            ReleaseGpuCapture();
             Debug.WriteLine("[NativeCameraWindows] Capture device released");
         }
         catch (Exception e)
@@ -839,36 +840,59 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
         }
 
-        var settings = new MediaCaptureInitializationSettings
+        MediaCaptureInitializationSettings NewSettings()
         {
-            VideoDeviceId = _cameraDevice.Id,
-            StreamingCaptureMode = captureMode,
-            PhotoCaptureSource = PhotoCaptureSource.VideoPreview
-        };
+            var created = new MediaCaptureInitializationSettings
+            {
+                VideoDeviceId = _cameraDevice.Id,
+                StreamingCaptureMode = captureMode,
+                PhotoCaptureSource = PhotoCaptureSource.VideoPreview
+            };
 
-        if (!string.IsNullOrEmpty(preferredAudioDeviceId))
+            if (!string.IsNullOrEmpty(preferredAudioDeviceId))
+            {
+                created.AudioDeviceId = preferredAudioDeviceId;
+            }
+            return created;
+        }
+
+        async Task InitializeCaptureAsync(MediaCaptureInitializationSettings settings)
         {
-            settings.AudioDeviceId = preferredAudioDeviceId;
+            try
+            {
+                await _mediaCapture.InitializeAsync(settings);
+            }
+            catch (Exception ex)
+            {
+                if (captureMode == StreamingCaptureMode.AudioAndVideo)
+                {
+                    Debug.WriteLine($"[NativeCameraWindows] Failed to initialize with Audio: {ex.Message}. Retrying Video only...");
+                    settings.StreamingCaptureMode = StreamingCaptureMode.Video;
+                    await _mediaCapture.InitializeAsync(settings);
+                }
+                else
+                {
+                    throw;
+                }
+            }
         }
 
         Debug.WriteLine($"[NativeCameraWindows] *** INITIALIZING MEDIACAPTURE WITH VideoDeviceId: {_cameraDevice.Id} ({_cameraDevice.Name}) ***");
 
+        // GPU preview: our own device on the UI's adapter is handed to Media Foundation (first choice)
+        var initSettings = NewSettings();
+        var onOurDevice = await PrepareGpuCaptureAsync(initSettings);
         try
         {
-            await _mediaCapture.InitializeAsync(settings);
+            await InitializeCaptureAsync(initSettings);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (onOurDevice)
         {
-            if (captureMode == StreamingCaptureMode.AudioAndVideo)
-            {
-                Debug.WriteLine($"[NativeCameraWindows] Failed to initialize with Audio: {ex.Message}. Retrying Video only...");
-                settings.StreamingCaptureMode = StreamingCaptureMode.Video;
-                await _mediaCapture.InitializeAsync(settings);
-            }
-            else
-            {
-                throw;
-            }
+            // second choice: Media Foundation's own device; whether it shares the UI's adapter is checked on the frames
+            NoteGpuCaptureFallback($"Media Foundation refused our capture device ({ex.Message}); using its own device");
+            _mediaCapture.Dispose();
+            _mediaCapture = new MediaCapture();
+            await InitializeCaptureAsync(NewSettings());
         }
 
         Debug.WriteLine("[NativeCameraWindows] MediaCapture initialized successfully");
@@ -1139,7 +1163,16 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             Debug.WriteLine("[NativeCameraWindows] No suitable format found, using default");
         }
 
-        _frameReader = await _mediaCapture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8);
+        // GPU preview: frames as the camera delivers them (NV12 / YUY2, MJPG decoded by the frame server), converted on the
+        // GPU; otherwise Windows converts to BGRA and the frame is read back
+        // A compressed format (MJPG) takes the same reader on the raster path: the Bgra8 conversion cannot decode it (the
+        // reader then fails to start), so the video processor converts the decoded frames before the readback.
+        _rasterNative = !_gpuCapture && IsCompressedSubtype(_frameSource.CurrentFormat?.Subtype);
+        _frameReader = _gpuCapture || _rasterNative
+            ? await _mediaCapture.CreateFrameReaderAsync(_frameSource)
+            : await _mediaCapture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8);
+        if (_gpuCapture || _rasterNative)
+            ReadFrameColour(_frameSource.CurrentFormat);
         _frameReader.FrameArrived += OnFrameArrived;
         Debug.WriteLine("[NativeCameraWindows] Frame reader created and event handler attached");
     }
@@ -1405,10 +1438,17 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             {
                 var videoFrame = frame.VideoMediaFrame;
 
-                // The software bitmap first, read through raw COM (SoftwareBitmapPixels) so no projected
-                // SoftwareBitmap is created (its constructor adds 1.2 MB of GC pressure per frame); a frame that
-                // has no software bitmap goes through its Direct3D surface. Neither is touched here.
-                ProcessFrameAsync(videoFrame);
+                if (_gpuCapture)
+                {
+                    ProcessGpuFrame(videoFrame); // converted on the GPU into the preview ring, synchronously
+                }
+                else
+                {
+                    // The software bitmap first, read through raw COM (SoftwareBitmapPixels) so no projected
+                    // SoftwareBitmap is created (its constructor adds 1.2 MB of GC pressure per frame); a frame that
+                    // has no software bitmap goes through its Direct3D surface. Neither is touched here.
+                    ProcessFrameAsync(videoFrame);
+                }
             }
             withError = null;
         }
@@ -1423,9 +1463,9 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
     private bool ShouldGeneratePreviewFrame()
     {
-        if (FormsControl.IsRecording || FormsControl.IsPreRecording)
+        if (_gpuCapture || FormsControl.IsRecording || FormsControl.IsPreRecording)
         {
-            return true;
+            return true; // the GPU ring always keeps the newest frame; the UI takes the latest when it draws
         }
 
         lock (_lockPreview)
@@ -1449,6 +1489,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
         _isProcessingFrame = true;
         CapturedImage capturedImage = null;
+        var frameStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
         try
         {
@@ -1461,8 +1502,9 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
                 using var d3dSurface = preRecording ? null : videoFrame.Direct3DSurface;
                 if (d3dSurface != null)
                 {
-                    // staging-texture readback when the surface is DXGI-backed, else a GPU copy into a software bitmap
-                    skImage = ConvertDirect3DToOptimizedSKImage(d3dSurface);
+                    // staging-texture readback when the surface is DXGI-backed, else a GPU copy into a software bitmap;
+                    // a decoded compressed format is converted to BGRA by the video processor first
+                    skImage = _rasterNative ? ConvertNativeFrameToRaster(d3dSurface) : ConvertDirect3DToOptimizedSKImage(d3dSurface);
                     if (skImage != null)
                         SoftwareBitmapPixels.D3DOptimized++;
                     else
@@ -1504,6 +1546,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
                     Meta = meta,
                     Rotation = rotation
                 };
+                AddCameraTiming(System.Diagnostics.Stopwatch.GetElapsedTime(frameStart).TotalMilliseconds);
             }
         }
         catch (Exception e)
@@ -1773,6 +1816,20 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     private int _wantGeneration;
     private (bool On, bool Release, int Generation) _appliedWish;
     private volatile bool _disposed;
+    private readonly Queue<(Func<Task> Run, TaskCompletionSource Done)> _lifecycleActions = new();
+
+    /// <summary>
+    /// Runs an operation that stops and restarts the frame reader (still capture, preview format change) as a step of the
+    /// lifecycle loop, after any pending start or stop, so it never overlaps one. The task ends when the step ran.
+    /// </summary>
+    private Task RunInLifecycle(Func<Task> action)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_lifecycleLock)
+            _lifecycleActions.Enqueue((action, done));
+        RunLifecycle();
+        return done.Task;
+    }
 
     public void Start()
     {
@@ -1811,15 +1868,44 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         while (true)
         {
             (bool On, bool Release, int Generation) wish;
+            (Func<Task> Run, TaskCompletionSource Done) action = default;
             lock (_lifecycleLock)
             {
                 wish = (_wantOn, _wantRelease, _wantGeneration);
-                if (_disposed || wish == _appliedWish)
+                if (_disposed)
                 {
+                    while (_lifecycleActions.TryDequeue(out var dropped))
+                        dropped.Done.TrySetCanceled();
                     _lifecycleRunning = false;
                     return;
                 }
-                _appliedWish = wish; // also when the step fails: a failed start is reported, not retried in a loop
+                if (wish == _appliedWish)
+                {
+                    // start and stop first, then the operations that need a running reader
+                    if (!_lifecycleActions.TryDequeue(out action))
+                    {
+                        _lifecycleRunning = false;
+                        return;
+                    }
+                }
+                else
+                {
+                    _appliedWish = wish; // also when the step fails: a failed start is reported, not retried in a loop
+                }
+            }
+
+            if (action.Run != null)
+            {
+                try
+                {
+                    await action.Run();
+                    action.Done.TrySetResult();
+                }
+                catch (Exception e)
+                {
+                    action.Done.TrySetException(e);
+                }
+                continue;
             }
 
             try
@@ -2120,6 +2206,19 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         IReadOnlyList<Windows.Media.Capture.Frames.MediaFrameFormat> availableFormats,
         double targetAspectRatio)
     {
+        // test only: DRAWNUI_CAMERA_TEST_PREVIEW=1920x1080 (or 1920x1080:MJPG) forces a preview format the automatic choice would not make
+        if (Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_PREVIEW") is { Length: > 0 } forced)
+        {
+            var parts = forced.Split(':');
+            var match = availableFormats
+                .Where(f => $"{f.VideoFormat.Width}x{f.VideoFormat.Height}" == parts[0]
+                            && (parts.Length < 2 || string.Equals(f.Subtype, parts[1], StringComparison.OrdinalIgnoreCase)))
+                .OrderByDescending(f => f.FrameRate.Numerator / (double)f.FrameRate.Denominator)
+                .FirstOrDefault();
+            if (match != null)
+                return match;
+        }
+
         const double aspectRatioTolerance = 0.1; // 10% tolerance
         const int minWidth = 640;
         const int minHeight = 480;
@@ -2196,6 +2295,9 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     /// <returns></returns>
     public SKImage GetPreviewImage()
     {
+        if (_gpuCapture)
+            return GetGpuPreviewImage(); // UI thread: a GPU image of the UI's context; other threads: a raster copy
+
         lock (_lockPreview)
         {
             SKImage preview = null;
@@ -2211,6 +2313,9 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
     public bool HasBufferedPreviewFrame()
     {
+        if (_gpuCapture)
+            return _gpuPipeline?.Ring?.LatestSlot >= 0;
+
         lock (_lockPreview)
         {
             return _preview != null && _preview.Image != null;
@@ -2220,10 +2325,14 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     /// <summary>
     /// Updates preview format to match current capture format aspect ratio
     /// </summary>
-    public async Task UpdatePreviewFormatAsync()
+    public Task UpdatePreviewFormatAsync() => RunInLifecycle(UpdatePreviewFormatCoreAsync); // stops and restarts the reader
+
+    private async Task UpdatePreviewFormatCoreAsync()
     {
         try
         {
+            if (State != CameraProcessorState.Enabled)
+                return; // switched off meanwhile: the next start picks the format anyway
             if (_frameSource?.SupportedFormats == null)
             {
                 Debug.WriteLine("[NativeCameraWindows] No frame source available for preview format update");
@@ -2261,6 +2370,8 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
                 // Set new format
                 await _frameSource.SetFormatAsync(newPreviewFormat);
+                if (_gpuCapture || _rasterNative)
+                    ReadFrameColour(newPreviewFormat);
 
                 PreviewWidth = (int)newPreviewFormat.VideoFormat.Width;
                 PreviewHeight = (int)newPreviewFormat.VideoFormat.Height;
@@ -2462,12 +2573,29 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         return new CameraManualExposureRange(0, 0, 0, 0, false, null);
     }
 
-    public async void TakePicture()
+    public void TakePicture()
     {
         if (_isCapturingStill || _mediaCapture == null)
             return;
 
         _isCapturingStill = true;
+
+        // the capture stops and restarts the frame reader: a step of the lifecycle loop, never during a start or stop
+        _ = RunInLifecycle(TakePictureCoreAsync).ContinueWith(t =>
+        {
+            _isCapturingStill = false; // skipped because the camera was disposed
+        }, TaskContinuationOptions.OnlyOnCanceled);
+    }
+
+    private async Task TakePictureCoreAsync()
+    {
+        if (_mediaCapture == null || State != CameraProcessorState.Enabled)
+        {
+            _isCapturingStill = false;
+            var off = new InvalidOperationException("the camera was switched off before the picture could be taken");
+            MainThread.BeginInvokeOnMainThread(() => StillImageCaptureFailed?.Invoke(off));
+            return;
+        }
 
         try
         {
@@ -3563,6 +3691,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
             ReleaseCachedReadbackTexture();
             ReleaseGpuFrameDevice();
+            DisposeGpuCapture();
 
             // a step still running releases the lock itself when it sees _disposed
             lock (_lifecycleLock)

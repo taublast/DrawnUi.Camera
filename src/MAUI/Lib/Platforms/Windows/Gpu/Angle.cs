@@ -27,6 +27,7 @@ internal static unsafe class Angle
     const uint GL_TEXTURE_WRAP_S = 0x2802, GL_TEXTURE_WRAP_T = 0x2803, GL_CLAMP_TO_EDGE = 0x812F;
 
     [DllImport(EglLib)] public static extern nint eglGetCurrentDisplay();
+    [DllImport(EglLib)] public static extern nint eglGetCurrentContext();
     [DllImport(EglLib)] static extern nint eglGetProcAddress([MarshalAs(UnmanagedType.LPStr)] string name);
     [DllImport(EglLib)] public static extern int eglInitialize(nint dpy, out int major, out int minor);
     [DllImport(EglLib)] public static extern int eglTerminate(nint dpy);
@@ -188,7 +189,7 @@ internal static unsafe class Angle
     {
         gl = BindTexture(display, texture, out image);
         gr.ResetContext(); // the raw GL calls changed bindings behind Skia's back
-        var backend = new GRBackendTexture(width, height, false, new GRGlTextureInfo(GL_TEXTURE_2D, gl, GL_BGRA8_EXT));
+        using var backend = new GRBackendTexture(width, height, false, new GRGlTextureInfo(GL_TEXTURE_2D, gl, GL_BGRA8_EXT)); // Skia keeps its own copy
         return SKImage.FromTexture(gr, backend, GRSurfaceOrigin.TopLeft, SKColorType.Bgra8888, SKAlphaType.Premul)
                ?? throw new InvalidOperationException("SKImage.FromTexture returned null for the EGLImage texture");
     }
@@ -200,7 +201,7 @@ internal static unsafe class Angle
     {
         gl = BindTexture(display, texture, out image);
         gr.ResetContext();
-        var backend = new GRBackendTexture(width, height, false, new GRGlTextureInfo(GL_TEXTURE_2D, gl, GL_BGRA8_EXT));
+        using var backend = new GRBackendTexture(width, height, false, new GRGlTextureInfo(GL_TEXTURE_2D, gl, GL_BGRA8_EXT)); // Skia keeps its own copy
         return SKSurface.Create(gr, backend, GRSurfaceOrigin.TopLeft, 1, SKColorType.Bgra8888)
                ?? throw new InvalidOperationException("SKSurface over the D3D render target returned null");
     }

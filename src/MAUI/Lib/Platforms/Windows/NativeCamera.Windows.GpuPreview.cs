@@ -96,7 +96,7 @@ public partial class NativeCamera
             return false;
         }
 
-        var (ui, reason) = await GpuDevices.UiAdapterAsync();
+        var (ui, reason) = await FormsControl.CanvasAdapterAsync();
         if (GpuDevices.TestWarpUiPreview && ui != null)
             ui = GpuDevices.WarpAdapter() ?? ui; // test: pretend the UI renders on the software adapter
         if (ui == null)

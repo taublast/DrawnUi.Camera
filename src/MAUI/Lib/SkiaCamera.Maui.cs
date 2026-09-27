@@ -3890,9 +3890,15 @@ public partial class SkiaCamera : SkiaControl
         }
     }
 
+    /// <summary>
+    /// Platform hook at the start of every Paint, on the render thread (Windows reads which display renders the canvas).
+    /// </summary>
+    partial void OnPainting();
+
     protected override void Paint(DrawingContext ctx)
     {
         base.Paint(ctx);
+        OnPainting();
 
         if (State == HardwareState.On)
         {

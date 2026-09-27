@@ -50,11 +50,10 @@ internal static class GpuDevices
     }
 
     /// <summary>
-    /// The adapter ANGLE renders the UI on: the display current on the UI thread (DrawnUi keeps its context current there).
-    /// Only that one query runs on the UI thread; loading ANGLE's entry points and reading the adapter run on the pool, so
-    /// first use costs the UI nothing. Null with a reason when it cannot be determined.
+    /// The display current on the UI thread, 0 when none: what an accelerated DrawnUi canvas left current after its last
+    /// frame. Only that query runs on the UI thread.
     /// </summary>
-    public static async Task<(Adapter? Adapter, string Reason)> UiAdapterAsync()
+    public static async Task<nint> UiThreadDisplayAsync()
     {
         var missing = await Task.Run(() =>
         {
@@ -63,13 +62,17 @@ internal static class GpuDevices
                 Angle.eglGetCurrentDisplay(); // binds the import here rather than on the UI thread
             return lacking;
         });
-        if (missing != null)
-            return (null, $"ANGLE lacks {missing}");
-        var display = await MainThread.InvokeOnMainThreadAsync(Angle.eglGetCurrentDisplay);
-        if (display == 0)
-            return (null, "no ANGLE display is current on the UI thread (canvas not accelerated or not drawn yet)");
-        return await Task.Run(() => AdapterOfDisplay(display));
+        return missing != null ? 0 : await MainThread.InvokeOnMainThreadAsync(Angle.eglGetCurrentDisplay);
     }
+
+    /// <summary>
+    /// The adapter ANGLE renders the given display on, read on the pool. Null with a reason when it cannot be determined.
+    /// </summary>
+    public static Task<(Adapter? Adapter, string Reason)> AdapterOfDisplayAsync(nint display) => Task.Run(() =>
+    {
+        var missing = Angle.Load();
+        return missing != null ? (null, $"ANGLE lacks {missing}") : AdapterOfDisplay(display);
+    });
 
     static unsafe (Adapter? Adapter, string Reason) AdapterOfDisplay(nint display)
     {

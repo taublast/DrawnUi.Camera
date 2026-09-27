@@ -42,6 +42,64 @@ public partial class SkiaCamera
     readonly Stopwatch _reportClock = new();
     static readonly HashSet<string> LoggedGpuReasons = new();
 
+    // The ANGLE display the canvas draws this camera with, read in Paint, where the canvas has its context current: -1 until
+    // the camera was painted, 0 on a raster canvas. The GPU path is chosen by it, so it does not matter whether the camera
+    // was switched on before or after the canvas first drew.
+    nint _canvasDisplay = -1;
+    nint _canvasDisplayContext = -1; // render thread: the GRContext the display was read with
+    readonly TaskCompletionSource _canvasPainted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// How long camera setup waits for the first paint of a camera switched on before its canvas drew.
+    /// </summary>
+    static readonly TimeSpan CanvasPaintWait = TimeSpan.FromSeconds(3);
+
+    partial void OnPainting()
+    {
+        var context = Superview?.GetGRContext()?.Handle ?? 0;
+        if (context == _canvasDisplayContext)
+            return; // one compare per frame once known
+        _canvasDisplayContext = context;
+        nint display = 0;
+        if (context != 0)
+        {
+            try
+            {
+                display = Angle.eglGetCurrentDisplay();
+            }
+            catch (Exception e)
+            {
+                Super.Log($"[SkiaCamera] the canvas display cannot be read: {e.Message}", Microsoft.Extensions.Logging.LogLevel.Information);
+            }
+        }
+        Volatile.Write(ref _canvasDisplay, display);
+        _canvasPainted.TrySetResult();
+    }
+
+    /// <summary>
+    /// The adapter the camera's canvas renders on, for choosing the GPU path. A camera switched on before its canvas first
+    /// drew waits for that first paint, up to <see cref="CanvasPaintWait"/>; a camera that is not painted (hidden, not in a
+    /// canvas yet) falls back to the display current on the UI thread. Null with a reason when there is none.
+    /// </summary>
+    internal async Task<(GpuDevices.Adapter? Adapter, string Reason)> CanvasAdapterAsync()
+    {
+        var display = Volatile.Read(ref _canvasDisplay);
+        if (display == -1 && IsVisible)
+        {
+            await Task.WhenAny(_canvasPainted.Task, Task.Delay(CanvasPaintWait));
+            display = Volatile.Read(ref _canvasDisplay);
+        }
+        if (display == 0)
+            return (null, "the camera's canvas is not accelerated");
+        if (display == -1)
+        {
+            display = await GpuDevices.UiThreadDisplayAsync();
+            if (display == 0)
+                return (null, "the camera was not painted on an accelerated canvas and no ANGLE display is current on the UI thread");
+        }
+        return await GpuDevices.AdapterOfDisplayAsync(display);
+    }
+
     /// <summary>
     /// A running GPU recorder with the camera ring armed, or null with <see cref="RecordingReport"/> saying why.
     /// Reuses the running one (pre-recording turning into the live recording).
@@ -69,7 +127,7 @@ public partial class SkiaCamera
                 reason = "no native camera";
             else
             {
-                var (ui, uiReason) = await GpuDevices.UiAdapterAsync();
+                var (ui, uiReason) = await CanvasAdapterAsync();
                 if (GpuDevices.TestWarpUi && ui != null)
                     ui = GpuDevices.WarpAdapter(); // test: pretend the UI renders on the software adapter
                 report.UiAdapter = ui?.ToString();

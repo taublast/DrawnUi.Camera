@@ -72,6 +72,114 @@ internal sealed unsafe class GpuRecorder : IDisposable
 
     public IMFDXGIDeviceManager* DeviceManager => _manager;
 
+    /// <summary>The recorder thread's OS id (diagnostics: its CPU time).</summary>
+    public uint NativeThreadId { get; private set; }
+
+    // GPU time of each recording frame on this device (compose flush + mirror copy + NV12 conversion), from timestamp
+    // queries read back a few frames later without waiting
+    const int TimingSets = 4;
+    readonly nint[] _timingDisjoint = new nint[TimingSets], _timingStart = new nint[TimingSets], _timingEnd = new nint[TimingSets];
+    readonly bool[] _timingPending = new bool[TimingSets];
+    int _timingNext;
+    double _gpuMsSum, _gpuMsMax;
+    long _gpuMsFrames;
+    readonly object _timingLock = new();
+
+    volatile bool _timingEnabled; // off until someone asks: no queries in normal use
+
+    /// <summary>
+    /// Average and maximum GPU milliseconds per recording frame on the recorder's device since the last call (diagnostics;
+    /// the first call switches the timing on).
+    /// </summary>
+    public (double Average, double Max, long Frames) TakeGpuTiming()
+    {
+        _timingEnabled = true;
+        lock (_timingLock)
+        {
+            var result = (_gpuMsFrames > 0 ? _gpuMsSum / _gpuMsFrames : 0, _gpuMsMax, _gpuMsFrames);
+            _gpuMsSum = _gpuMsMax = 0;
+            _gpuMsFrames = 0;
+            return result;
+        }
+    }
+
+    void BeginGpuTiming()
+    {
+        if (!_timingEnabled)
+            return;
+        CollectGpuTiming();
+        var i = _timingNext;
+        if (_timingPending[i])
+            return; // still in flight: this frame is not timed
+        if (_timingDisjoint[i] == 0)
+        {
+            var disjointDesc = new D3D11_QUERY_DESC { Query = D3D11_QUERY.D3D11_QUERY_TIMESTAMP_DISJOINT };
+            var stampDesc = new D3D11_QUERY_DESC { Query = D3D11_QUERY.D3D11_QUERY_TIMESTAMP };
+            ID3D11Query* q;
+            if (_device->CreateQuery(&disjointDesc, &q).FAILED) return;
+            _timingDisjoint[i] = (nint)q;
+            if (_device->CreateQuery(&stampDesc, &q).FAILED) return;
+            _timingStart[i] = (nint)q;
+            if (_device->CreateQuery(&stampDesc, &q).FAILED) return;
+            _timingEnd[i] = (nint)q;
+        }
+        _context->Begin((ID3D11Asynchronous*)_timingDisjoint[i]);
+        _context->End((ID3D11Asynchronous*)_timingStart[i]);
+    }
+
+    void EndGpuTiming()
+    {
+        if (!_timingEnabled)
+            return;
+        var i = _timingNext;
+        if (_timingPending[i] || _timingEnd[i] == 0)
+            return;
+        _context->End((ID3D11Asynchronous*)_timingEnd[i]);
+        _context->End((ID3D11Asynchronous*)_timingDisjoint[i]);
+        _context->Flush(); // otherwise the end stamp waits in the command buffer until the next frame's flush
+        _timingPending[i] = true;
+        _timingNext = (i + 1) % TimingSets;
+    }
+
+    void CollectGpuTiming()
+    {
+        for (var i = 0; i < TimingSets; i++)
+        {
+            if (!_timingPending[i])
+                continue;
+            D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint;
+            ulong start, end;
+            const uint dontFlush = 1; // D3D11_ASYNC_GETDATA_DONOTFLUSH
+            if (_context->GetData((ID3D11Asynchronous*)_timingDisjoint[i], &disjoint, (uint)sizeof(D3D11_QUERY_DATA_TIMESTAMP_DISJOINT), dontFlush).Value != 0
+                || _context->GetData((ID3D11Asynchronous*)_timingStart[i], &start, sizeof(ulong), dontFlush).Value != 0
+                || _context->GetData((ID3D11Asynchronous*)_timingEnd[i], &end, sizeof(ulong), dontFlush).Value != 0)
+                continue;
+            _timingPending[i] = false;
+            if (disjoint.Disjoint || disjoint.Frequency == 0)
+                continue;
+            var ms = (end - start) * 1000.0 / disjoint.Frequency;
+            lock (_timingLock)
+            {
+                _gpuMsSum += ms;
+                _gpuMsFrames++;
+                if (ms > _gpuMsMax)
+                    _gpuMsMax = ms;
+            }
+        }
+    }
+
+    void ReleaseGpuTiming()
+    {
+        for (var i = 0; i < TimingSets; i++)
+        {
+            foreach (var q in new[] { _timingDisjoint[i], _timingStart[i], _timingEnd[i] })
+                if (q != 0)
+                    ((ID3D11Query*)q)->Release();
+            _timingDisjoint[i] = _timingStart[i] = _timingEnd[i] = 0;
+            _timingPending[i] = false;
+        }
+    }
+
     /// <summary>The recorder's GRContext: valid on the recorder thread only.</summary>
     public GRContext Context => _gr;
 
@@ -160,6 +268,7 @@ internal sealed unsafe class GpuRecorder : IDisposable
     void Run()
     {
         _threadId = Environment.CurrentManagedThreadId;
+        NativeThreadId = GetCurrentThreadId();
         while (!_stop)
         {
             while (_jobs.TryDequeue(out var job))
@@ -310,6 +419,7 @@ internal sealed unsafe class GpuRecorder : IDisposable
     public IMFSample* EndFrame()
     {
         var t0 = Stopwatch.GetTimestamp();
+        BeginGpuTiming();
         _targetSurface.Canvas.Flush();
         _gr.Flush(true, false); // submit to ANGLE's immediate context: the blit below is ordered after it on the same context
         PublishMirror();
@@ -321,7 +431,10 @@ internal sealed unsafe class GpuRecorder : IDisposable
             if (hr.SUCCEEDED)
                 break;
             if (hr.Value != unchecked((int)0xC00D4A3E) || attempt >= 400) // MF_E_SAMPLEALLOCATOR_EMPTY: all samples are with the encoder
+            {
+                EndGpuTiming();
                 return null;
+            }
             Thread.Sleep(1);
         }
 
@@ -344,6 +457,7 @@ internal sealed unsafe class GpuRecorder : IDisposable
             buffer->GetMaxLength(&max);
             buffer->SetCurrentLength(max); // allocator buffers start empty; the sink writer rejects a 0-length buffer
 
+            EndGpuTiming();
             FramesConverted++;
             LastSubmitMs = Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
             var result = sample;
@@ -622,6 +736,7 @@ internal sealed unsafe class GpuRecorder : IDisposable
         try
         {
             Interlocked.Exchange(ref _mirror, null)?.Dispose(); // the UI's view keeps its own references to the textures
+            ReleaseGpuTiming();
             if (_gr != null)
             {
                 CloseRing();

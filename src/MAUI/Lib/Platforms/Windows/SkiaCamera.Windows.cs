@@ -1247,8 +1247,8 @@ public partial class SkiaCamera : SkiaControl
             // As on Android and iOS the preview shows the composed recording frame (ProcessFrame baked in, ProcessPreview
             // skipped): the recorder shares each frame with the UI through its mirror ring, no copy to the CPU. Camera
             // frames reach the recorder through the GPU ring; this callback only counts them.
-            UseRecordingFramesForPreview = true;
-            if (MirrorRecordingToPreview)
+            UseRecordingFramesForPreview = !Gpu.GpuDevices.TestLivePreviewWhileRecording;
+            if (MirrorRecordingToPreview && UseRecordingFramesForPreview)
                 gpu.MirrorFrame = () => SafeAction(() => UpdatePreview());
             if (NativeControl is NativeCamera gpuCam)
             {

@@ -180,6 +180,12 @@ internal static class GpuDevices
     /// </summary>
     public static readonly bool TestStamp = Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_STAMP") == "1";
 
+    /// <summary>
+    /// Test-only: DRAWNUI_CAMERA_TEST_RECORDING_PREVIEW=live keeps the live camera preview during a GPU recording instead
+    /// of mirroring the recording (the phase R behaviour), to measure one against the other. Unset in normal use.
+    /// </summary>
+    public static readonly bool TestLivePreviewWhileRecording = Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_RECORDING_PREVIEW") == "live";
+
     public static void ThrowIfFailed(HRESULT hr, string what)
     {
         if (hr.FAILED)

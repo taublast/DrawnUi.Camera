@@ -438,7 +438,7 @@ public static class SampleAutomation
         TaskCompletionSource<CapturedVideo> done)
     {
         cam.MeasurePaint = true; // slow paints are logged with their time
-        var rawRgba = Arg("--raw-rgba") is { } rawRecordSize ? new RawRgbaProbe(rawRecordSize, cam, false) : null;
+        var rawRgba = Arg("--raw-rgba") is { } rawRecordSize ? new RawRgbaProbe(rawRecordSize, cam, false, Arg("--raw-rgba-identity") != null) : null;
         if (rawRgba != null)
             cam.RawFrameProbe = rawRgba.OnFrame; // during a recording the hook fires from the recording loop
 

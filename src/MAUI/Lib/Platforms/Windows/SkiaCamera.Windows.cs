@@ -1027,6 +1027,11 @@ public partial class SkiaCamera : SkiaControl
         StopPreviewAudioCapture();
         ResetWindowsRecordingQueue();
 
+        // The live preview keeps running until an encoder can feed it: mirroring the encoder output from here on froze
+        // the preview for the whole encoder start (0.1-1.1 s, the hardware MFT's activation) while camera frames kept
+        // arriving. The raster path switches to its mirror once the encoder is initialized; the GPU path never mirrors.
+        UseRecordingFramesForPreview = false;
+
         // GPU path when possible (own device, display and GRContext on a recorder thread, never the UI's GRContext);
         // otherwise the raster path: composition on a background thread with a raster surface.
         var continuing = _captureVideoEncoder != null; // pre-recording turning into the live recording

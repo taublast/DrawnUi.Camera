@@ -3591,6 +3591,8 @@ public partial class SkiaCamera : SkiaControl
             // Only show frames that were actually composed for recording.
             // If none is available yet, return null so the previous displayed frame stays,
             // avoiding a fallback blink from the raw preview without overlay.
+            if (winEnc.IsGpu)
+                return GetGpuMirrorImage(); // composed on the GPU recorder, shared with the UI without a copy
             if (winEnc.TryAcquirePreviewImage(out var img) && img != null)
                 return img; // renderer takes ownership and must dispose
 

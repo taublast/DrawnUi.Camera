@@ -175,10 +175,14 @@ public partial class SkiaCamera
 
         using (encoder.BeginFrame(elapsed, out var canvas, out var info))
         {
+            // the raw camera frame before any overlay, from the recording loop as on the raster path, Android and iOS, once
+            // the preview mirrors the recording (until then the live preview fires it)
+            if (UseRecordingFramesForPreview)
+                OnRawFrameAvailable(CreateRawCameraFrameInternal(image, 0));
+
             if (canvas == null)
                 return;
 
-            // the raw-frame hook fires from the preview path, which stays live while recording on the GPU
             ComposeRecordingFrame(canvas, info, image, elapsed);
 
             _diagSubmitSw.Restart();
@@ -188,6 +192,44 @@ public partial class SkiaCamera
             Interlocked.Increment(ref _diagSubmittedFrames);
             CalculateRecordingFps();
         }
+    }
+
+    GpuPreviewView _mirrorView; // UI thread
+    bool _mirrorFailureLogged;
+
+    /// <summary>
+    /// UI thread, while a GPU recording is mirrored into the preview: the newest composed recording frame as an SKImage
+    /// of the UI's context (no copy), or null when nothing is newer.
+    /// </summary>
+    SKImage GetGpuMirrorImage()
+    {
+        var ring = _gpuRecorder?.Mirror;
+        if (ring == null)
+            return null;
+        if (_mirrorView == null || !ReferenceEquals(_mirrorView.Ring, ring) || _mirrorView.Display != Angle.eglGetCurrentDisplay())
+        {
+            _mirrorView?.Dispose();
+            _mirrorView = GpuPreviewView.Open(ring, out var reason);
+            if (_mirrorView == null)
+            {
+                if (!_mirrorFailureLogged)
+                {
+                    _mirrorFailureLogged = true;
+                    Super.Log($"[SkiaCamera] the recording cannot be shown in the preview: {reason}", Microsoft.Extensions.Logging.LogLevel.Information);
+                }
+                return null;
+            }
+        }
+        return _mirrorView.TakeLatest(Superview?.GetGRContext(), out _, out _, out _);
+    }
+
+    /// <summary>
+    /// UI thread (the view's GL textures belong to the UI's context): drops the view of the recording mirror.
+    /// </summary>
+    void ReleaseGpuMirrorView()
+    {
+        _mirrorView?.Dispose();
+        _mirrorView = null;
     }
 
     /// <summary>

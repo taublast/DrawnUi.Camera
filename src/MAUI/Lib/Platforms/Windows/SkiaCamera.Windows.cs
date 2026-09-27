@@ -68,6 +68,7 @@ public partial class SkiaCamera : SkiaControl
     private void ResumeWindowsPreviewAfterStop()
     {
         UseRecordingFramesForPreview = false;
+        SafeAction(ReleaseGpuMirrorView);
         if (NativeControl is NativeCamera cpuFramesCam)
             cpuFramesCam.CpuFramesWanted = false;
 
@@ -199,7 +200,9 @@ public partial class SkiaCamera : SkiaControl
         using (winEnc.BeginFrame(elapsed, out var canvas, out var info))
         {
             // srcImg from Windows capture is already in display orientation — no further rotation needed.
-            OnRawFrameAvailable(CreateRawCameraFrameInternal(srcImg, 0));
+            // Fired here once the preview mirrors the recording; until the encoder is ready the live preview fires it.
+            if (UseRecordingFramesForPreview)
+                OnRawFrameAvailable(CreateRawCameraFrameInternal(srcImg, 0));
 
             if (canvas == null)
                 return;
@@ -1217,10 +1220,12 @@ public partial class SkiaCamera : SkiaControl
 
         if (gpu != null)
         {
-            // The recording is composed on another device, so the preview keeps its own live path (camera rate,
-            // RenderPreviewForProcessing + ProcessPreview) instead of mirroring the encoder output. Camera frames reach
-            // the recorder through the GPU ring; this callback only counts them.
-            UseRecordingFramesForPreview = false;
+            // As on Android and iOS the preview shows the composed recording frame (ProcessFrame baked in, ProcessPreview
+            // skipped): the recorder shares each frame with the UI through its mirror ring, no copy to the CPU. Camera
+            // frames reach the recorder through the GPU ring; this callback only counts them.
+            UseRecordingFramesForPreview = true;
+            if (MirrorRecordingToPreview)
+                gpu.MirrorFrame = () => SafeAction(() => UpdatePreview());
             if (NativeControl is NativeCamera gpuCam)
             {
                 gpuCam.PreviewCaptureSuccess = _ =>
@@ -1505,6 +1510,7 @@ public partial class SkiaCamera : SkiaControl
         (NativeControl as NativeCamera)?.DisarmRecordingRing();
         Interlocked.Exchange(ref _gpuRecorder, null)?.Dispose();
         Interlocked.Exchange(ref _gpuRing, null)?.Dispose();
+        ReleaseGpuMirrorView(); // GL names are only deleted when the UI's context is current
     }
 
 
@@ -1674,11 +1680,11 @@ public partial class SkiaCamera : SkiaControl
 
         var info = new SKImageInfo(targetWidth, targetHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
 
-        // Try GPU-backed surface using encoder's GRContext; a frame of the GPU preview is a texture of the UI's context
-        // (this runs in the paint): scale it there and read back only the small result
+        // Try GPU-backed surface using encoder's GRContext. A GPU frame is a texture of the context it is used on: the UI's
+        // (preview, in the paint) or the GPU recorder's (recording, on its thread): scale it there, read back the result
         GRContext grContext = null;
         if (rawImage.IsTextureBacked)
-            grContext = Superview?.GetGRContext();
+            grContext = _gpuRecorder is { IsRecorderThread: true } recorder ? recorder.Context : Superview?.GetGRContext();
         else if (_captureVideoEncoder is WindowsCaptureVideoEncoder winEnc)
             grContext = winEnc.Context;
 

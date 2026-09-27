@@ -72,6 +72,24 @@ internal sealed unsafe class GpuRecorder : IDisposable
 
     public IMFDXGIDeviceManager* DeviceManager => _manager;
 
+    /// <summary>The recorder's GRContext: valid on the recorder thread only.</summary>
+    public GRContext Context => _gr;
+
+    /// <summary>True on the recorder thread.</summary>
+    public bool IsRecorderThread => Environment.CurrentManagedThreadId == _threadId;
+
+    // the composed recording frame shared with the UI: the preview shows it while recording, as on Android and iOS
+    GpuFrameRing _mirror;
+
+    /// <summary>
+    /// The composed recording frames, shared with the UI thread (null before the first frame; replaced when the size
+    /// changes). The preview mirrors them while recording.
+    /// </summary>
+    public GpuFrameRing Mirror => Volatile.Read(ref _mirror);
+
+    /// <summary>Raised on the recorder thread after each composed frame reached <see cref="Mirror"/>.</summary>
+    public Action MirrorFrame { get; set; }
+
     GpuRecorder(GpuDevices.Adapter adapter)
     {
         Adapter = adapter;
@@ -294,6 +312,7 @@ internal sealed unsafe class GpuRecorder : IDisposable
         var t0 = Stopwatch.GetTimestamp();
         _targetSurface.Canvas.Flush();
         _gr.Flush(true, false); // submit to ANGLE's immediate context: the blit below is ordered after it on the same context
+        PublishMirror();
 
         IMFSample* sample = null;
         for (var attempt = 0; ; attempt++)
@@ -341,6 +360,32 @@ internal sealed unsafe class GpuRecorder : IDisposable
                 buffer->Release();
             if (sample != null)
                 sample->Release();
+        }
+    }
+
+    /// <summary>
+    /// Recorder thread: the composed frame copied into the mirror ring for the preview (a GPU copy; skipped when the UI
+    /// still uses every free slot).
+    /// </summary>
+    void PublishMirror()
+    {
+        try
+        {
+            var mirror = _mirror;
+            if (mirror == null || mirror.Width != _width || mirror.Height != _height)
+            {
+                var created = GpuFrameRing.Create(_device, _width, _height, out var reason);
+                if (created == null)
+                    return;
+                Interlocked.Exchange(ref _mirror, created)?.Dispose();
+                mirror = created;
+            }
+            if (mirror.Produce(_target, 0, DateTime.UtcNow))
+                MirrorFrame?.Invoke();
+        }
+        catch (Exception e)
+        {
+            Super.Log($"[GpuRecorder] preview mirror failed: {e.Message}");
         }
     }
 
@@ -576,6 +621,7 @@ internal sealed unsafe class GpuRecorder : IDisposable
     {
         try
         {
+            Interlocked.Exchange(ref _mirror, null)?.Dispose(); // the UI's view keeps its own references to the textures
             if (_gr != null)
             {
                 CloseRing();

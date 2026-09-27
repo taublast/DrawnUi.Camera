@@ -471,6 +471,39 @@ public static unsafe class SoftwareBitmapPixels
         }
     }
 
+    static readonly Guid IidDxgiSurface2 = new("ABA496DD-B617-4CB8-A866-BC44D7EB1FA2"); // dxgi1_2.h
+    const int SlotGetResource = 13; // IDXGISurface2: IUnknown 3, IDXGIObject 4, IDXGIDeviceSubObject 1, IDXGISurface 3, IDXGISurface1 2
+
+    /// <summary>
+    /// The ID3D11Texture2D behind a projected Direct3D surface and the subresource the surface stands for
+    /// (Media Foundation may hand out one slice of a texture array), via <c>IDXGISurface2::GetResource</c>.
+    /// Falls back to the texture itself with subresource 0. The caller releases the returned reference.
+    /// </summary>
+    public static IntPtr GetDxgiTexture(object surface, Guid textureIid, out uint subresource)
+    {
+        subresource = 0;
+        var surface2 = GetDxgiInterface(surface, IidDxgiSurface2);
+        if (surface2 != IntPtr.Zero)
+        {
+            try
+            {
+                IntPtr parent;
+                uint index;
+                var hr = ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, uint*, int>)Slot(surface2, SlotGetResource))(surface2, &textureIid, &parent, &index);
+                if (hr == 0 && parent != IntPtr.Zero)
+                {
+                    subresource = index;
+                    return parent;
+                }
+            }
+            finally
+            {
+                Marshal.Release(surface2);
+            }
+        }
+        return GetDxgiInterface(surface, textureIid);
+    }
+
     static void* Slot(IntPtr obj, int index) => (*(void***)obj)[index];
 
     static int GetInt(IntPtr obj, int slot, int* value)
@@ -1237,7 +1270,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             // failed, and every frame silently took the SoftwareBitmap copy below), so the DXGI access
             // interface is queried on the raw pointer instead.
             stage = "get-interface";
-            var texturePtr = SoftwareBitmapPixels.GetDxgiInterface(d3dSurface, typeof(ID3D11Texture2D).GUID);
+            var texturePtr = SoftwareBitmapPixels.GetDxgiTexture(d3dSurface, typeof(ID3D11Texture2D).GUID, out var subresource);
             if (texturePtr == IntPtr.Zero)
             {
                 SoftwareBitmapPixels.LastD3DError = "no ID3D11Texture2D: " + SoftwareBitmapPixels.LastD3DError;
@@ -1270,25 +1303,32 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
 
             ID3D11Resource resourceToMap = null;
+            uint subresourceToMap = subresource;
 
             if (useStaging)
             {
+                // the frame is one subresource of the texture (a slice when it is an array): stage only that one
+                var sliceDesc = desc;
+                sliceDesc.ArraySize = 1;
+                sliceDesc.MipLevels = 1;
+
                 stage = "staging";
-                var stagingTexture = GetOrCreateReadbackTexture(device, desc);
+                var stagingTexture = GetOrCreateReadbackTexture(device, sliceDesc);
 
                 try
                 {
                     stage = "copy";
-                    context.CopyResource((ID3D11Resource)stagingTexture, (ID3D11Resource)texture);
+                    context.CopySubresourceRegion((ID3D11Resource)stagingTexture, 0, 0, 0, 0, (ID3D11Resource)texture, subresource, IntPtr.Zero);
                 }
                 catch
                 {
                     ReleaseCachedReadbackTexture();
-                    stagingTexture = GetOrCreateReadbackTexture(device, desc);
-                    context.CopyResource((ID3D11Resource)stagingTexture, (ID3D11Resource)texture);
+                    stagingTexture = GetOrCreateReadbackTexture(device, sliceDesc);
+                    context.CopySubresourceRegion((ID3D11Resource)stagingTexture, 0, 0, 0, 0, (ID3D11Resource)texture, subresource, IntPtr.Zero);
                 }
 
                 resourceToMap = (ID3D11Resource)stagingTexture;
+                subresourceToMap = 0;
             }
             else
             {
@@ -1296,7 +1336,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
 
             stage = "map";
-            context.Map(resourceToMap, 0, (uint)D3D11_MAP.READ, 0, out mapped);
+            context.Map(resourceToMap, subresourceToMap, (uint)D3D11_MAP.READ, 0, out mapped);
 
             try
             {
@@ -1310,7 +1350,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
             finally
             {
-                context.Unmap(resourceToMap, 0);
+                context.Unmap(resourceToMap, subresourceToMap);
             }
         }
         catch (Exception e)
@@ -1430,7 +1470,9 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             var skImage = preRecording ? null : SoftwareBitmapPixels.Wrap(videoFrame);
             if (skImage == null)
             {
-                var d3dSurface = preRecording ? null : videoFrame.Direct3DSurface;
+                // disposed after use: an undisposed surface keeps its texture referenced until a GC finalizes it,
+                // and Media Foundation allocates a new texture for every frame meanwhile
+                using var d3dSurface = preRecording ? null : videoFrame.Direct3DSurface;
                 if (d3dSurface != null)
                 {
                     // staging-texture readback when the surface is DXGI-backed, else a GPU copy into a software bitmap
@@ -1691,7 +1733,8 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     {
         try
         {
-            var softwareBitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(videoFrame.Direct3DSurface);
+            using var surface = videoFrame.Direct3DSurface;
+            var softwareBitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(surface);
             if (softwareBitmap != null)
             {
                 //Debug.WriteLine("[NativeCameraWindows] Successfully converted Direct3D surface to software bitmap");

@@ -141,8 +141,13 @@ public partial class NativeCamera
     int _uiSlot = -1;
     ulong _uiFrame;
     volatile object _rgbaWanted;             // GpuRgbaScaler.Request (boxed: set on the render thread, read on the camera thread)
-    long _rgbaWantedAt;                      // _gpuFramesDone when it was last asked for
-    long _gpuFramesDone;                     // camera thread
+    long _rgbaWantedAt;                      // Stopwatch timestamp of the last request
+
+    /// <summary>
+    /// Diagnostics: ML input reads served from the camera thread's preparation and scaled in the callback, since the camera
+    /// set up the current pipeline.
+    /// </summary>
+    internal (long Prepared, long ScaledNow) RgbaCounts => (_gpuPipeline?.RgbaPrepared ?? 0, _gpuPipeline?.RgbaScaledNow ?? 0);
 
     /// <summary>
     /// Render thread, inside the raw-frame callback of a GPU frame: RGBA8888 of that same frame, scaled, centre-cropped and
@@ -161,7 +166,7 @@ public partial class NativeCamera
             return false;
         var request = new GpuRgbaScaler.Request(width, height, rotation, cropRatio);
         _rgbaWanted = request;
-        Volatile.Write(ref _rgbaWantedAt, Volatile.Read(ref _gpuFramesDone));
+        Volatile.Write(ref _rgbaWantedAt, Stopwatch.GetTimestamp());
         return pipeline.ReadRgba(ring, _uiSlot, _uiFrame, request, buffer);
     }
 
@@ -233,10 +238,9 @@ public partial class NativeCamera
                 var time = DateTime.UtcNow;
                 // ML input of this frame, prepared while a consumer keeps asking (it stops a second after the last request)
                 var rgba = _rgbaWanted as GpuRgbaScaler.Request?;
-                if (rgba != null && _gpuFramesDone - Volatile.Read(ref _rgbaWantedAt) > 30)
+                if (rgba != null && Stopwatch.GetElapsedTime(Volatile.Read(ref _rgbaWantedAt)).TotalSeconds > 1)
                     rgba = null;
                 var failure = _gpuPipeline.Process(texture, subresource, _frameRange, _frameMatrix, _uiAdapter.Value, time, rgba, out var slot, out var slotTexture);
-                _gpuFramesDone++;
                 if (failure != null)
                 {
                     DisableGpuCapture(failure);

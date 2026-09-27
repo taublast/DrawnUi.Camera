@@ -173,6 +173,13 @@ internal static class GpuDevices
     public static readonly double TestDeviceLostAfter = double.TryParse(Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_DEVICE_LOST"),
         System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var seconds) ? seconds : -1;
 
+    /// <summary>
+    /// Test-only: DRAWNUI_CAMERA_TEST_STAMP=1 writes each GPU preview frame's number into the frame itself (20 black or
+    /// white cells across the middle of the top band) right after conversion, so tests can tell which frame a consumer
+    /// got. Unset in normal use.
+    /// </summary>
+    public static readonly bool TestStamp = Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_STAMP") == "1";
+
     public static void ThrowIfFailed(HRESULT hr, string what)
     {
         if (hr.FAILED)

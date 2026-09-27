@@ -215,6 +215,7 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
                 {
                     _converter.ReleaseTargets();
                     _rgba?.ReleaseInputs();
+                    ReleaseStampViews();
                     Ring?.Dispose();
                     Ring = GpuFrameRing.Create(device, (int)desc.Width, (int)desc.Height, out var reason);
                     if (Ring == null)
@@ -228,6 +229,8 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
                 return null;
             }
             _converter.Convert(source, subresource, nominalRange, yuvMatrix, target);
+            if (GpuDevices.TestStamp)
+                StampFrame(device, target, Ring.NextFrame);
             if (rgba is { } request && _rgbaFailure == null)
             {
                 try
@@ -251,6 +254,9 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
         }
     }
 
+    /// <summary>ML input reads served from the camera thread's preparation, and scaled in the callback (diagnostics).</summary>
+    public long RgbaPrepared, RgbaScaledNow;
+
     /// <summary>Raised once, on the camera thread, when the ML input cannot be prepared on this device.</summary>
     public Action<string> RgbaFailed;
 
@@ -272,9 +278,13 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
         {
             var scaler = _rgba;
             if (scaler != null && scaler.TryRead(slot, request, frame, buffer))
+            {
+                RgbaPrepared++;
                 return true;
+            }
             if (scaler == null)
                 return false; // the camera thread creates it with the first request
+            RgbaScaledNow++;
             return scaler.PrepareAndRead(slot, ring.SlotTexture(slot), request, frame, buffer);
         }
         catch (Exception e)
@@ -290,8 +300,52 @@ internal sealed unsafe class GpuCapturePipeline : IDisposable
     /// </summary>
     public SKImage ReadBack(nint slotTexture) => _converter?.ReadBack((ID3D11Texture2D*)slotTexture);
 
+    readonly Dictionary<nint, nint> _stampViews = new(); // test stamp: ring slot texture -> render target view
+
+    /// <summary>
+    /// Test only (<see cref="GpuDevices.TestStamp"/>): the frame number as 20 black or white cells across the middle of
+    /// the frame's top band (x 30-70 %, y 0-10 %), cleared into the ring slot on the camera's device.
+    /// </summary>
+    void StampFrame(ID3D11Device* device, ID3D11Texture2D* target, ulong frame)
+    {
+        if (!_stampViews.TryGetValue((nint)target, out var view))
+        {
+            ID3D11RenderTargetView* rtv;
+            GpuDevices.ThrowIfFailed(device->CreateRenderTargetView((ID3D11Resource*)target, null, &rtv), "stamp view");
+            target->AddRef();
+            _stampViews[(nint)target] = view = (nint)rtv;
+        }
+        ID3D11DeviceContext* context;
+        device->GetImmediateContext(&context);
+        ID3D11DeviceContext1* context1;
+        var hr = context->QueryInterface(__uuidof<ID3D11DeviceContext1>(), (void**)&context1);
+        context->Release();
+        if (hr.FAILED)
+            return;
+        var white = stackalloc float[] { 1, 1, 1, 1 };
+        var black = stackalloc float[] { 0, 0, 0, 1 };
+        float width = Ring.Width, height = Ring.Height, cell = width * 0.02f;
+        for (var i = 0; i < 20; i++)
+        {
+            var rect = new RECT { left = (int)(width * 0.3f + i * cell), right = (int)(width * 0.3f + (i + 1) * cell), top = 0, bottom = (int)(height * 0.1f) };
+            context1->ClearView((ID3D11View*)view, ((frame >> i) & 1) != 0 ? white : black, &rect, 1);
+        }
+        context1->Release();
+    }
+
+    void ReleaseStampViews()
+    {
+        foreach (var view in _stampViews)
+        {
+            ((ID3D11RenderTargetView*)view.Value)->Release();
+            ((ID3D11Texture2D*)view.Key)->Release();
+        }
+        _stampViews.Clear();
+    }
+
     void ReleaseDevice()
     {
+        ReleaseStampViews();
         lock (_lifetime)
         {
             _rgba?.Dispose();

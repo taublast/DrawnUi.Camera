@@ -107,6 +107,37 @@ public static class SampleAutomation
         _ = Task.Run(() => RunAsync(window, outDir));
     }
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern nint GetWindowLongPtrW(nint hwnd, int index);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern nint SetWindowLongPtrW(nint hwnd, int index, nint value);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern nint GetForegroundWindow();
+
+    static nint _hwnd;
+
+    /// <summary>
+    /// Test runs only, as the window is created (before it is shown): it never becomes the foreground window
+    /// (WS_EX_NOACTIVATE) and sits at the bottom of the z-order, so it cannot take focus or keystrokes from whoever works
+    /// at the desk. Only this process's own window is touched.
+    /// </summary>
+    public static void KeepInBackground(Microsoft.UI.Xaml.Window window)
+    {
+        if (!Enabled)
+            return;
+        const int GWL_EXSTYLE = -20;
+        const long WS_EX_NOACTIVATE = 0x08000000;
+        const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10;
+        _hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        SetWindowLongPtrW(_hwnd, GWL_EXSTYLE, (nint)((long)GetWindowLongPtrW(_hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE));
+        SetWindowPos(_hwnd, 1 /* HWND_BOTTOM */, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
+    }
+
     static void Place(Window window, string title)
     {
         try
@@ -118,6 +149,7 @@ public static class SampleAutomation
             // out of the way: a small window in the bottom-right corner of the work area
             var area = DisplayArea.GetFromWindowId(app.Id, DisplayAreaFallback.Primary).WorkArea;
             app.MoveAndResize(new global::Windows.Graphics.RectInt32(area.X + area.Width - 680, area.Y + area.Height - 560, 680, 560));
+            Log($"window placed; foreground is {(GetForegroundWindow() == _hwnd && _hwnd != 0 ? "THIS WINDOW (it took focus)" : "another window")}");
             if (native.Content is Microsoft.UI.Xaml.UIElement root)
             {
                 // input is only logged: a run that received any is reported as disturbed

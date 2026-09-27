@@ -2312,7 +2312,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         public static readonly System.Guid MF_MT_AAC_PAYLOAD_TYPE = new System.Guid("bfbabe79-7434-4d1c-94f0-72a3b9e17188");
         public static readonly System.Guid MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = new System.Guid("7632f0e6-5038-4b86-8469-7963eb172ca6");
 
-        public static readonly System.Guid MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS = new System.Guid("a634a91c-822b-41b9-a494-4ae46436892d");
+        public static readonly System.Guid MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS = new System.Guid("a634a91c-822b-41b9-a494-4de4643612b0"); // mfreadwrite.h (the old value had wrong last bytes, so hardware encoders were never enabled)
     }
 
 

@@ -16,7 +16,8 @@ namespace CameraTests;
 /// inside this process through the camera control's own API: no desktop input is simulated. Writes a log and one RESULT line,
 /// then exits with code 0 on success.
 /// <code>
-/// --auto-run record|preview|restart-test
+/// --auto-run record|preview|restart-test|photo|dispose-test
+/// --dispose-during start|recording  dispose-test: when the camera control is disposed
 /// --capture video|still          capture mode (record: video)
 /// --video-format 1280x720@30     one of the camera's video formats, or --video-quality low|standard|high|ultra
 /// --shader none|NAME|FILE.sksl   a ShaderEffect name (Zoom, Movie, Wes, Runner, Desat, BW, Sketch) or an .sksl file
@@ -26,9 +27,13 @@ namespace CameraTests;
 /// --audio on|off                 record audio (default on)
 /// --stop stop|abort              how the recording ends
 /// --after-seconds 0              stay in preview this long after the recording (memory lines keep coming)
-/// --repeat 1                     record this many times in a row
+/// --repeat 1                     record (photo: take) this many times in a row
 /// --stamp                        burn a frame counter into every recorded frame (checked by Mp4Check --stamps)
 /// --restart-during N             N seconds into the recording, change a setting that restarts the camera
+/// --restart-kind quality|mode|format  which setting: photo quality, capture mode (to Still), or another video format
+/// --snapshot FILE.png            preview: save the frame GetPreviewImage returns off the UI thread
+/// --snapshot-ab FOLDER           preview: snapshots GPU, CPU, GPU again within seconds (colour comparison of the paths)
+/// --raw-rgba 224x224             preview: RawCameraFrame.TryGetRgba on every 5th raw frame (success, ms, luma)
 /// --memory-every 10              seconds between MEM lines (private bytes, handles, GC counts)
 /// --out FOLDER                   where the recording is copied (default %TEMP%\SkiaCameraRuns)
 /// --log FILE                     log file (default FOLDER\run.log)
@@ -56,6 +61,12 @@ public static class SampleAutomation
     }
 
     public static bool Enabled => Arg("--auto-run") != null;
+
+    /// <summary>
+    /// --auto-run ui-record: the recording is driven through the page's own record button handler on the UI thread, and the
+    /// page's own save and thumbnail code runs (the file is moved out of the gallery into the run folder afterwards).
+    /// </summary>
+    public static bool UiFlow => Arg("--auto-run") == "ui-record";
 
     static string _logPath;
     static readonly object LogGate = new();
@@ -130,7 +141,7 @@ public static class SampleAutomation
         public override void WriteLine(string message)
         {
             if (message != null && (message.StartsWith("[SkiaCamera]") || message.StartsWith("[NativeCameraWindows]")
-                                    || message.StartsWith("[GpuRecorder]") || message.StartsWith("[AppCamera]")))
+                                    || message.StartsWith("[GpuRecorder]") || message.StartsWith("[AppCamera]") || message.StartsWith("[PROBE]")))
                 Log("LIB " + message);
         }
     }
@@ -168,6 +179,22 @@ public static class SampleAutomation
             };
             cam.OnError += (_, e) => Log("OnError " + e);
             cam.StateChanged += (_, st) => Log("State " + st);
+            var progressLogged = false;
+            cam.RecordingProgress += (_, d) =>
+            {
+                if (progressLogged && d > TimeSpan.FromSeconds(0.5))
+                    return;
+                progressLogged = true;
+                Log($"RecordingProgress {d.TotalMilliseconds:0} ms (thread {Environment.CurrentManagedThreadId}{(MainThread.IsMainThread ? ", UI" : "")})");
+            };
+            cam.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName is nameof(SkiaCamera.IsRecording) or nameof(SkiaCamera.IsPreRecording))
+                {
+                    progressLogged = false;
+                    Log($"{e.PropertyName} = {(e.PropertyName == nameof(SkiaCamera.IsRecording) ? cam.IsRecording : cam.IsPreRecording)} (thread {Environment.CurrentManagedThreadId}{(MainThread.IsMainThread ? ", UI" : "")})");
+                }
+            };
 
             if (!await WaitFrames(30, 30))
                 throw new Exception("no preview frames within 30 s of start");
@@ -181,8 +208,11 @@ public static class SampleAutomation
             code = mode switch
             {
                 "record" => await Record(cam, outDir, result),
-                "preview" => await Preview(result),
+                "preview" => await Preview(cam, result),
                 "restart-test" => await RestartTest(cam, result),
+                "photo" => await Photo(cam, result),
+                "dispose-test" => await DisposeTest(cam, result),
+                "ui-record" => await UiRecord(window, cam, outDir, result),
                 _ => throw new Exception($"unknown --auto-run {mode}")
             };
             _stopMemory = true;
@@ -369,6 +399,7 @@ public static class SampleAutomation
     static async Task<int> RecordCore(AppCamera cam, string outDir, StringBuilder result, double seconds, double pre, bool abort,
         TaskCompletionSource<CapturedVideo> done)
     {
+        cam.MeasurePaint = true; // slow paints are logged with their time
 
         if (pre > 0)
         {
@@ -384,6 +415,7 @@ public static class SampleAutomation
 
         var paceFrom = Clock.Elapsed.TotalMilliseconds;
         var uiGaps = UiHeartbeat(TimeSpan.FromSeconds(seconds + 2));
+        Log("StartVideoRecording called");
         await Task.Run(() => cam.StartVideoRecording());
         Log($"recording {(pre > 0 ? "live " : "")}for {seconds} s, IsRecording={cam.IsRecording}");
         var restartAt = double.Parse(Arg("--restart-during") ?? "-1", CultureInfo.InvariantCulture);
@@ -391,8 +423,30 @@ public static class SampleAutomation
         {
             // a setting that makes the camera set itself up again while the recording runs
             await Task.Delay(TimeSpan.FromSeconds(restartAt));
-            await OnMain(() => cam.PhotoQuality = cam.PhotoQuality == CaptureQuality.High ? CaptureQuality.Medium : CaptureQuality.High);
-            Log($"camera restart requested during the recording (PhotoQuality -> {cam.PhotoQuality})");
+            var kind = Arg("--restart-kind") ?? "quality";
+            var formats = kind == "format" ? await MainThread.InvokeOnMainThreadAsync(() => cam.GetAvailableVideoFormatsAsync()) : null;
+            await OnMain(() =>
+            {
+                switch (kind)
+                {
+                    case "mode":
+                        cam.CaptureMode = CaptureModeType.Still;
+                        break;
+                    case "format":
+                        var current = cam.NativeControl?.GetCurrentVideoFormat();
+                        var other = formats?.FirstOrDefault(f => f.Width != current?.Width && f.FrameRate >= 25);
+                        if (other != null)
+                        {
+                            cam.VideoQuality = VideoQuality.Manual;
+                            cam.VideoFormatIndex = other.Index;
+                        }
+                        break;
+                    default:
+                        cam.PhotoQuality = cam.PhotoQuality == CaptureQuality.High ? CaptureQuality.Medium : CaptureQuality.High;
+                        break;
+                }
+            });
+            Log($"camera restart requested during the recording ({kind}): {Describe(cam)}");
             await Task.Delay(TimeSpan.FromSeconds(seconds - restartAt));
         }
         else
@@ -439,13 +493,291 @@ public static class SampleAutomation
         return abort || copy != null ? 0 : 1;
     }
 
-    static async Task<int> Preview(StringBuilder result)
+    static async Task<int> Preview(AppCamera cam, StringBuilder result)
     {
         var seconds = double.Parse(Arg("--seconds") ?? "10", CultureInfo.InvariantCulture);
+        var rgba = Arg("--raw-rgba") is { } rawSize ? new RawRgbaProbe(rawSize) : null;
+        if (rgba != null)
+            cam.RawFrameProbe = rgba.OnFrame;
+        cam.MeasurePaint = true;
+        cam.TakePaintTiming();
+        TakeCameraTiming(cam);
+        var uiThreadId = await MainThread.InvokeOnMainThreadAsync(GetCurrentThreadId);
+        var process = Process.GetCurrentProcess();
+        var uiCpu0 = ThreadCpu(process, uiThreadId);
+        var cpu0 = process.TotalProcessorTime;
+        var frames0 = Interlocked.Read(ref _previewFrames);
         var from = Clock.Elapsed.TotalMilliseconds;
+        var ui = UiHeartbeat(TimeSpan.FromSeconds(seconds));
         await Task.Delay(TimeSpan.FromSeconds(seconds));
-        result.Append($" mode=preview preview={Pace(from, Clock.Elapsed.TotalMilliseconds)}");
+        var paint = cam.TakePaintTiming();
+        var camera = TakeCameraTiming(cam);
+        process.Refresh();
+        var uiCpu = ThreadCpu(process, uiThreadId) - uiCpu0;
+        var cpu = process.TotalProcessorTime - cpu0;
+        var frames = Math.Max(1, Interlocked.Read(ref _previewFrames) - frames0);
+        var uiThread = await ui;
+        // uiCpu: the UI thread's CPU time (paint, texture uploads, flush, everything else of the app) per second and per frame;
+        // processCpu: all threads of the process per second
+        result.Append(string.Create(CultureInfo.InvariantCulture,
+            $" mode=preview preview={Pace(from, Clock.Elapsed.TotalMilliseconds)} uiThread={uiThread} cameraPaintMs=avg{paint.Average:0.00},max{paint.Max:0.00},n{paint.Paints} cameraThreadMs={camera}" +
+            $" uiCpuMs=perSec{uiCpu.TotalMilliseconds / seconds:0.0},perFrame{uiCpu.TotalMilliseconds / frames:0.00} processCpuMsPerSec={cpu.TotalMilliseconds / seconds:0.0}"));
+        if (rgba != null)
+        {
+            cam.RawFrameProbe = null;
+            result.Append(" rawRgba=" + rgba);
+        }
+
+        // a camera frame as the library hands it to a consumer off the UI thread
+        // (on the raster path the UI usually takes each frame first, so this may need a few tries)
+        async Task<string> Snapshot(string file)
+        {
+            using var image = await Task.Run(async () =>
+            {
+                for (var i = 0; i < 100; i++)
+                {
+                    if (cam.NativeControl?.GetPreviewImage() is { } frame)
+                        return frame;
+                    await Task.Delay(5);
+                }
+                return null;
+            });
+            if (image == null)
+                throw new Exception("GetPreviewImage returned no frame off the UI thread");
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            await File.WriteAllBytesAsync(file, data.ToArray());
+            return $"\"{file}\" {image.Width}x{image.Height}";
+        }
+
+        if (Arg("--snapshot") is { } snapshot)
+            result.Append($" snapshot={await Snapshot(snapshot)}");
+
+        if (Arg("--snapshot-ab") is { } folder)
+        {
+            // the same scene through both paths within seconds: GPU, CPU, GPU again (the two GPU frames give the noise floor)
+            var property = cam.GetType().GetProperty("UseGpuProcessing");
+            result.Append($" ab-gpu1={await Snapshot(Path.Combine(folder, "ab-gpu1.png"))}");
+            await OnMain(() => property.SetValue(cam, false));
+            if (!await Settle(cam, 20))
+                throw new Exception("camera did not settle on the CPU path");
+            result.Append($" ab-cpu={await Snapshot(Path.Combine(folder, "ab-cpu.png"))}");
+            await OnMain(() => property.SetValue(cam, true));
+            if (!await Settle(cam, 20))
+                throw new Exception("camera did not settle on the GPU path");
+            result.Append($" ab-gpu2={await Snapshot(Path.Combine(folder, "ab-gpu2.png"))}");
+        }
         return 0;
+    }
+
+    /// <summary>
+    /// Still photos (--repeat N): each one must arrive through CaptureSuccess with pixels that are not black, and the preview
+    /// must come back after it.
+    /// </summary>
+    static async Task<int> Photo(AppCamera cam, StringBuilder result)
+    {
+        var repeat = int.Parse(Arg("--repeat") ?? "3");
+        var fails = 0;
+        var sizes = new List<string>();
+        for (var i = 0; i < repeat; i++)
+        {
+            var done = new TaskCompletionSource<CapturedImage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            EventHandler<CapturedImage> onSuccess = (_, image) => done.TrySetResult(image);
+            EventHandler<Exception> onFailed = (_, e) => done.TrySetException(e);
+            cam.CaptureSuccess += onSuccess;
+            cam.CaptureFailed += onFailed;
+            try
+            {
+                var t = Stopwatch.StartNew();
+                await Task.Run(() => cam.TakePicture());
+                var finished = await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(20)));
+                if (finished != done.Task)
+                    throw new Exception("no CaptureSuccess within 20 s");
+                var captured = await done.Task;
+                var mean = MeanLuma(captured.Image);
+                if (cam.VideoEffect != ShaderEffect.None || cam.CustomShaderPath != null)
+                {
+                    // the shader baked into the photo, as the sample's own OnCaptureSuccess does
+                    var baked = await cam.RenderCapturedPhotoAsync(captured, overlay: null, configureImage: image =>
+                        image.VisualEffects.Add(cam.CustomShaderPath != null
+                            ? new SkiaShaderEffect { ShaderCode = File.ReadAllText(cam.CustomShaderPath) }
+                            : new SkiaShaderEffect { ShaderSource = ShaderEffectHelper.GetFilename(cam.VideoEffect) }),
+                        useGpu: true);
+                    captured.Image.Dispose();
+                    captured.Image = baked;
+                    mean = MeanLuma(captured.Image);
+                }
+                Log(string.Create(CultureInfo.InvariantCulture, $"photo {i + 1}: {captured.Image?.Width}x{captured.Image?.Height} meanLuma={mean:0.0} in {t.ElapsedMilliseconds} ms"));
+                sizes.Add($"{captured.Image?.Width}x{captured.Image?.Height}");
+                if (captured.Image == null || mean < 2)
+                    fails++;
+                captured.Dispose();
+            }
+            catch (Exception e)
+            {
+                fails++;
+                Log($"FAIL photo {i + 1}: {e.Message}");
+            }
+            finally
+            {
+                cam.CaptureSuccess -= onSuccess;
+                cam.CaptureFailed -= onFailed;
+            }
+            if (!await Settle(cam, 20))
+            {
+                fails++;
+                Log($"FAIL preview did not come back after photo {i + 1}");
+            }
+        }
+        result.Append($" mode=photo photos={repeat} sizes={string.Join(",", sizes.Distinct())} failures={fails}");
+        return fails == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// A recording as the record button makes it: the page's ToggleVideoRecording (Start and Stop on the UI thread), then
+    /// the page's own OnVideoRecordingSuccess (gallery move, thumbnail, what a thumbnail tap would open). Passes when the
+    /// page ends up with a saved video that the thumbnail opens. The file is moved from the gallery into the run folder.
+    /// </summary>
+    static async Task<int> UiRecord(Window window, AppCamera cam, string outDir, StringBuilder result)
+    {
+        var seconds = double.Parse(Arg("--seconds") ?? "5", CultureInfo.InvariantCulture);
+        var page = window.Page;
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var toggle = page.GetType().GetMethod("ToggleVideoRecording", flags) ?? throw new Exception("page has no ToggleVideoRecording");
+        object Field(string name) => page.GetType().GetField(name, flags)?.GetValue(page);
+
+        var before = Field("_lastSavedVideoPath") as string;
+        var uiGaps = UiHeartbeat(TimeSpan.FromSeconds(seconds + 4));
+        Log("record button: start");
+        toggle.Invoke(page, null);
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        Log($"record button: stop (IsRecording={cam.IsRecording})");
+        toggle.Invoke(page, null);
+
+        string saved = null;
+        for (var i = 0; i < 300 && (saved == null || saved == before); i++)
+        {
+            await Task.Delay(100);
+            saved = Field("_lastSavedVideoPath") as string;
+        }
+        await Task.Delay(500); // the thumbnail is set right after the path
+        Log($"page: _lastSavedVideoPath before \"{before}\" now \"{saved}\" exists={saved != null && File.Exists(saved)}");
+        var isVideo = Field("_lastMediaWasVideo") is true;
+        // the thumbnail's own image belongs to the canvas (it may be uploaded and freed at any time): read a copy on the UI thread
+        var (thumbSize, thumbLuma) = await MainThread.InvokeOnMainThreadAsync(() =>
+        {
+            var source = (Field("_previewThumbnail") as SkiaImage)?.LoadedSource;
+            if (source?.Image is not { Handle: not 0 } image)
+                return ("none", -1.0);
+            using var copy = source.Clone();
+            return ($"{image.Width}x{image.Height}", MeanLuma(copy?.Image));
+        });
+        var ui = await uiGaps;
+        string moved = null;
+        if (saved != null && saved != before && File.Exists(saved))
+        {
+            moved = Path.Combine(outDir, Path.GetFileName(saved));
+            File.Move(saved, moved, true); // out of the user's gallery
+        }
+        result.Append(string.Create(CultureInfo.InvariantCulture,
+            $" mode=ui-record saved={(moved != null ? "yes" : "no")} thumbnailOpensVideo={isVideo} thumbnail={thumbSize} thumbLuma={thumbLuma:0.0} uiThread={ui} file=\"{moved}\""));
+        return moved != null && isVideo && thumbLuma > 2 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Disposes the camera control while a start runs (--dispose-during start: a capture-mode restart, then the dispose
+    /// after a random 0-300 ms) or 2 s into a recording (--dispose-during recording). Passes when the process survives,
+    /// no error is raised and the camera device is free afterwards (it can be opened exclusively).
+    /// </summary>
+    static async Task<int> DisposeTest(AppCamera cam, StringBuilder result)
+    {
+        var during = Arg("--dispose-during") ?? "start";
+        var errors = 0;
+        cam.OnError += (_, _) => Interlocked.Increment(ref errors);
+        var deviceIds = (await MainThread.InvokeOnMainThreadAsync(() => cam.GetAvailableCamerasAsync()))?.Select(c => c.Id).ToList() ?? [];
+        if (during == "recording")
+        {
+            await Task.Run(() => cam.StartVideoRecording());
+            Log($"recording, IsRecording={cam.IsRecording}");
+            await Task.Delay(2000);
+        }
+        else
+        {
+            await OnMain(() => cam.CaptureMode = cam.CaptureMode == CaptureModeType.Still ? CaptureModeType.Video : CaptureModeType.Still);
+            await Task.Delay(500 + new Random(int.Parse(Arg("--seed") ?? "1")).Next(0, 300)); // the debounce is 500 ms
+        }
+        Log($"disposing the camera control during {during}");
+        await OnMain(() =>
+        {
+            cam.Parent?.RemoveSubView(cam);
+            cam.Dispose();
+        });
+        await Task.Delay(3000);
+
+        // every camera must be free: an exclusive open succeeds only when nobody holds the device
+        var free = deviceIds.Count > 0 ? "yes" : "no:no camera listed";
+        foreach (var id in deviceIds)
+        {
+            try
+            {
+                using var probe = new Windows.Media.Capture.MediaCapture();
+                await probe.InitializeAsync(new Windows.Media.Capture.MediaCaptureInitializationSettings
+                {
+                    VideoDeviceId = id,
+                    StreamingCaptureMode = Windows.Media.Capture.StreamingCaptureMode.Video,
+                    SharingMode = Windows.Media.Capture.MediaCaptureSharingMode.ExclusiveControl,
+                });
+            }
+            catch (Exception e)
+            {
+                free = "no:" + e.Message.Split('\n')[0].Trim();
+            }
+        }
+        var leftovers = Directory.GetFiles(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "CaptureVideo_*.mp4")
+            .Where(f => File.GetLastWriteTime(f) > DateTime.Now.AddMinutes(-2)).ToList();
+        foreach (var file in leftovers)
+        {
+            // a recording cut by the dispose: keep it in the run folder for the verifier, never in the user's Documents
+            var target = Path.Combine(Arg("--out") ?? Path.GetTempPath(), Path.GetFileName(file));
+            File.Move(file, target, true);
+            Log($"recording file left by the dispose: {target} ({new FileInfo(target).Length} bytes)");
+        }
+        result.Append($" mode=dispose-test during={during} errors={errors} deviceFree={free} files={leftovers.Count}");
+        return errors == 0 && free == "yes" ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Mean luma of an image on a coarse grid (-1 without pixels).
+    /// </summary>
+    static double MeanLuma(SKImage image)
+    {
+        if (image == null)
+            return -1;
+        // ToRasterImage hands back the caller's own object for a raster image: disposing that would free the caller's image
+        var raster = image.IsTextureBacked ? image.ToRasterImage() : image;
+        try
+        {
+            using var bitmap = SKBitmap.FromImage(raster);
+            return MeanLuma(bitmap);
+        }
+        finally
+        {
+            if (!ReferenceEquals(raster, image))
+                raster.Dispose();
+        }
+    }
+
+    static double MeanLuma(SKBitmap bitmap)
+    {
+        double sum = 0;
+        var n = 0;
+        for (var y = 0; y < bitmap.Height; y += Math.Max(1, bitmap.Height / 64))
+        for (var x = 0; x < bitmap.Width; x += Math.Max(1, bitmap.Width / 64))
+        {
+            var c = bitmap.GetPixel(x, y);
+            sum += 0.299 * c.Red + 0.587 * c.Green + 0.114 * c.Blue;
+            n++;
+        }
+        return n > 0 ? sum / n : -1;
     }
 
     /// <summary>
@@ -456,6 +788,9 @@ public static class SampleAutomation
         var rnd = new Random(int.Parse(Arg("--seed") ?? "1"));
         var count = int.Parse(Arg("--toggles") ?? "50");
         int checks = 0, fails = 0;
+        cam.MeasurePaint = true; // slow paints are logged with their time
+        var stopHeartbeat = new CancellationTokenSource();
+        var ui = UiHeartbeat(TimeSpan.FromHours(1), stopHeartbeat.Token);
         for (var i = 0; i < count; i++)
         {
             await OnMain(() => cam.CaptureMode = cam.CaptureMode == CaptureModeType.Still ? CaptureModeType.Video : CaptureModeType.Still);
@@ -470,22 +805,86 @@ public static class SampleAutomation
                 }
             }
         }
-        result.Append($" mode=restart-test toggles={count} settle-checks={checks} failures={fails}");
+        stopHeartbeat.Cancel();
+        result.Append($" mode=restart-test toggles={count} settle-checks={checks} failures={fails} uiThread={await ui}");
         return fails == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// --raw-rgba 224x224: RawCameraFrame.TryGetRgba on every 5th raw frame, inside the callback as the contract requires;
+    /// reports successes, time per call, the calling thread and the mean luma of the bytes.
+    /// </summary>
+    sealed class RawRgbaProbe(string size)
+    {
+        readonly int _w = int.Parse(size.Split('x')[0]), _h = int.Parse(size.Split('x')[1]);
+        readonly byte[] _buffer = new byte[int.Parse(size.Split('x')[0]) * int.Parse(size.Split('x')[1]) * 4];
+        long _frames, _calls, _ok;
+        double _ms, _maxMs, _luma;
+        bool _onUi, _offUi;
+
+        public void OnFrame(RawCameraFrame frame)
+        {
+            if (_frames++ % 5 != 0)
+                return;
+            var start = Stopwatch.GetTimestamp();
+            var ok = frame.TryGetRgba(_w, _h, _buffer);
+            var ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            _calls++;
+            _ms += ms;
+            _maxMs = Math.Max(_maxMs, ms);
+            if (MainThread.IsMainThread) _onUi = true; else _offUi = true;
+            if (!ok)
+                return;
+            _ok++;
+            double sum = 0;
+            for (var i = 0; i < _buffer.Length; i += 4 * 7)
+                sum += 0.299 * _buffer[i] + 0.587 * _buffer[i + 1] + 0.114 * _buffer[i + 2];
+            _luma = sum / (_buffer.Length / (4 * 7));
+        }
+
+        public override string ToString() => string.Create(CultureInfo.InvariantCulture,
+            $"ok{_ok}/{_calls},avgMs{(_calls > 0 ? _ms / _calls : 0):0.00},maxMs{_maxMs:0.00},thread{(_onUi ? "UI" : "")}{(_offUi ? "Other" : "")},luma{_luma:0.0}");
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern uint GetCurrentThreadId();
+
+    static TimeSpan ThreadCpu(Process process, uint threadId)
+    {
+        foreach (ProcessThread thread in process.Threads)
+            if (thread.Id == threadId)
+                return thread.TotalProcessorTime;
+        return TimeSpan.Zero;
+    }
+
+    /// <summary>
+    /// The library's camera-thread cost per frame (internal diagnostics of the Windows camera), as "avgX,maxY,nZ".
+    /// </summary>
+    static string TakeCameraTiming(SkiaCamera cam)
+    {
+        var native = cam.NativeControl;
+        var method = native?.GetType().GetMethod("TakeCameraTiming", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (method?.Invoke(native, null) is not ValueTuple<double, double, long> t)
+            return "unavailable";
+        return string.Create(CultureInfo.InvariantCulture, $"avg{t.Item1:0.00},max{t.Item2:0.00},n{t.Item3}");
     }
 
     /// <summary>
     /// UI-thread responsiveness: posts a tiny job every 10 ms and reports how long the longest one waited.
     /// </summary>
-    static async Task<string> UiHeartbeat(TimeSpan duration)
+    static async Task<string> UiHeartbeat(TimeSpan duration, CancellationToken stop = default)
     {
         var waits = new List<double>();
         var t = Stopwatch.StartNew();
-        while (t.Elapsed < duration)
+        while (t.Elapsed < duration && !stop.IsCancellationRequested)
         {
             var posted = Stopwatch.GetTimestamp();
+            var at = DateTime.Now;
             await MainThread.InvokeOnMainThreadAsync(() => { });
-            waits.Add(Stopwatch.GetElapsedTime(posted).TotalMilliseconds);
+            var waited = Stopwatch.GetElapsedTime(posted).TotalMilliseconds;
+            waits.Add(waited);
+            if (waited > 50)
+                Log(string.Create(CultureInfo.InvariantCulture, $"UI thread blocked {waited:0} ms from {at:HH:mm:ss.fff}"));
             await Task.Delay(10);
         }
         waits.Sort();

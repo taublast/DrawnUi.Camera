@@ -124,6 +124,59 @@ namespace CameraTests.Views
         /// </summary>
         public string CustomShaderPath { get; set; }
 
+        /// <summary>
+        /// Called with every raw frame before the base handling (test runs check the ML input with it).
+        /// </summary>
+        public Action<RawCameraFrame> RawFrameProbe { get; set; }
+
+        protected override void OnRawFrameAvailable(RawCameraFrame frame)
+        {
+            RawFrameProbe?.Invoke(frame);
+            base.OnRawFrameAvailable(frame);
+        }
+
+        /// <summary>
+        /// When true, the UI-thread time of every Paint of this control is collected (test runs).
+        /// </summary>
+        public bool MeasurePaint { get; set; }
+
+        private double _paintMsSum, _paintMsMax;
+        private long _paintCount;
+
+        protected override void Paint(DrawingContext ctx)
+        {
+            if (!MeasurePaint)
+            {
+                base.Paint(ctx);
+                return;
+            }
+            var start = System.Diagnostics.Stopwatch.GetTimestamp();
+            base.Paint(ctx);
+            var ms = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            if (ms > 30)
+                Super.Log($"[AppCamera] paint took {ms:0} ms (from {DateTime.Now.AddMilliseconds(-ms):HH:mm:ss.fff})");
+            lock (this)
+            {
+                _paintMsSum += ms;
+                _paintMsMax = Math.Max(_paintMsMax, ms);
+                _paintCount++;
+            }
+        }
+
+        /// <summary>
+        /// Average and maximum UI-thread milliseconds per Paint since the last call, and the paint count.
+        /// </summary>
+        public (double Average, double Max, long Paints) TakePaintTiming()
+        {
+            lock (this)
+            {
+                var result = (_paintCount > 0 ? _paintMsSum / _paintCount : 0, _paintMsMax, _paintCount);
+                _paintMsSum = _paintMsMax = 0;
+                _paintCount = 0;
+                return result;
+            }
+        }
+
         protected override void RenderPreviewForProcessing(SKCanvas canvas, SKImage frame)
         {
             var shader = _previewEffect.Get(VideoEffect, CustomShaderPath);

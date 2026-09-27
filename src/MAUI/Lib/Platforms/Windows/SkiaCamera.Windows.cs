@@ -99,8 +99,9 @@ public partial class SkiaCamera : SkiaControl
     }
 
     /// <summary>
-    /// Disposal: a running recording is aborted before anything is torn down, and its frame composition is waited for
-    /// (bounded). RenderFrameForRecording and ProcessFrame run on a recording thread and may use what this control or a
+    /// Disposal during a recording, before anything is torn down: as on Android and iOS the recording is finalized and the
+    /// file left where the encoder wrote it, without recording events. The frame being composed is waited for first
+    /// (bounded): RenderFrameForRecording and ProcessFrame run on a recording thread and may use what this control or a
     /// subclass releases while disposing. A camera that is not recording is not affected.
     /// </summary>
     partial void OnWillDisposeWhileRecording()
@@ -109,12 +110,35 @@ public partial class SkiaCamera : SkiaControl
             return;
         try
         {
-            if (!Task.Run(() => StopVideoRecording(true)).Wait(TimeSpan.FromSeconds(3)))
-                Super.Log("[SkiaCamera] recording abort before dispose did not finish within 3 s");
+            if (!Task.Run(FinishRecordingForDisposeAsync).Wait(TimeSpan.FromSeconds(3)))
+                Super.Log("[SkiaCamera] finishing the recording before dispose did not end within 3 s");
         }
         catch (Exception e)
         {
-            Super.Log($"[SkiaCamera] recording abort before dispose failed: {e.Message}");
+            Super.Log($"[SkiaCamera] finishing the recording before dispose failed: {e.Message}");
+        }
+    }
+
+    private async Task FinishRecordingForDisposeAsync()
+    {
+        _frameCaptureTimer?.Dispose();
+        _frameCaptureTimer = null;
+        if (NativeControl is NativeCamera camera)
+            camera.PreviewCaptureSuccess = null; // no further frames reach the recording
+        await WaitForWindowsRecordingQueueAsync(dropPendingFrames: true); // the raster frame being composed ends first
+        var encoder = Interlocked.Exchange(ref _captureVideoEncoder, null);
+        StopGpuRecordingIfIdle(); // joins the GPU recorder thread: its frame being composed ends first
+        if (_audioCapture != null)
+        {
+            _audioCapture.SampleAvailable -= OnAudioSampleAvailable;
+            await _audioCapture.StopAsync();
+            _audioCapture.Dispose();
+            _audioCapture = null;
+        }
+        if (encoder != null)
+        {
+            await encoder.StopAsync(); // finalizes the file
+            encoder.Dispose();
         }
     }
 

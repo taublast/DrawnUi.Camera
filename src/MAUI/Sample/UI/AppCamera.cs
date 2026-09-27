@@ -270,9 +270,10 @@ namespace CameraTests.Views
 
         public override void OnWillDisposeWithChildren()
         {
-            ReleaseEffectShader();
-
+            // the camera stops its recording first: its recording thread may still be drawing with these shaders
             base.OnWillDisposeWithChildren();
+
+            ReleaseEffectShader();
 
             _paintRec?.Dispose();
             _paintRec = null;
@@ -565,6 +566,9 @@ namespace CameraTests.Views
 
         protected override void Dispose(bool isDisposing)
         {
+            // the camera stops its recording first: its recording thread may still be drawing with these
+            base.Dispose(isDisposing);
+
             if (isDisposing)
             {
                 _paint?.Dispose();
@@ -572,8 +576,6 @@ namespace CameraTests.Views
                 _font?.Dispose();
                 _fontPreview?.Dispose();
             }
-
-            base.Dispose(isDisposing);
         }
 
         public FrameOverlay CreateOverlay()

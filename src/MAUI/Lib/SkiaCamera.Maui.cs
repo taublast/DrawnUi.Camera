@@ -2062,6 +2062,22 @@ public partial class SkiaCamera : SkiaControl
     /// </summary>
     public override void OnWillDisposeWithChildren()
     {
+        // A running recording is aborted before anything is torn down, and its frame composition is waited for (bounded):
+        // RenderFrameForRecording and ProcessFrame run on a recording thread and may use what this control or a subclass
+        // releases while disposing. A camera that is not recording is not affected.
+        if (IsRecording || IsPreRecording)
+        {
+            try
+            {
+                if (!Task.Run(() => StopVideoRecording(true)).Wait(TimeSpan.FromSeconds(3)))
+                    Super.Log("[SkiaCamera] recording abort before dispose did not finish within 3 s");
+            }
+            catch (Exception e)
+            {
+                Super.Log($"[SkiaCamera] recording abort before dispose failed: {e.Message}");
+            }
+        }
+
         base.OnWillDisposeWithChildren();
 
         Super.OnNativeAppResumed -= Super_OnNativeAppResumed;

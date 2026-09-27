@@ -23,7 +23,7 @@ public partial class SkiaCamera
     /// drawn without a CPU copy, and recordings are composed and encoded on the GPU. When it does not (no accelerated canvas,
     /// camera frames on another adapter than the UI, missing driver features) the raster path is used, the reason is logged
     /// once, and <see cref="RecordingReport"/> says why for recordings. Changing it while the camera is on restarts the
-    /// camera; a recording reads it when it starts. PROVISIONAL name.
+    /// camera; a recording reads it when it starts.
     /// </summary>
     public bool UseGpuProcessing
     {

@@ -37,6 +37,7 @@ namespace CameraTests;
 /// --raw-rgba 224x224             preview or record: RawCameraFrame.TryGetRgba on every 5th raw frame (success, ms, luma)
 /// --check-mirror                 record with --stamp: the preview must show the recording frames (their counter is read back)
 /// --raw-rgba-check               with --raw-rgba: pixel error against the Skia path on the same frames (rotations, crop)
+/// --raw-rgba-identity            with --raw-rgba and DRAWNUI_CAMERA_TEST_STAMP=1: TryGetRgba bytes and the drawn frame carry the same frame number
 /// --memory-every 10              seconds between MEM lines (private bytes, handles, GC counts)
 /// --out FOLDER                   where the recording is copied (default %TEMP%\SkiaCameraRuns)
 /// --log FILE                     log file (default FOLDER\run.log)
@@ -565,7 +566,7 @@ public static class SampleAutomation
     static async Task<int> Preview(AppCamera cam, StringBuilder result)
     {
         var seconds = double.Parse(Arg("--seconds") ?? "10", CultureInfo.InvariantCulture);
-        var rgba = Arg("--raw-rgba") is { } rawSize ? new RawRgbaProbe(rawSize, cam, Arg("--raw-rgba-check") != null) : null;
+        var rgba = Arg("--raw-rgba") is { } rawSize ? new RawRgbaProbe(rawSize, cam, Arg("--raw-rgba-check") != null, Arg("--raw-rgba-identity") != null) : null;
         if (rgba != null)
             cam.RawFrameProbe = rgba.OnFrame;
         cam.MeasurePaint = true;
@@ -595,6 +596,9 @@ public static class SampleAutomation
         {
             cam.RawFrameProbe = null;
             result.Append(" rawRgba=" + rgba);
+            // how the library served them (internal diagnostics of the Windows GPU path)
+            if (cam.NativeControl?.GetType().GetProperty("RgbaCounts", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(cam.NativeControl) is ValueTuple<long, long> counts)
+                result.Append($" rgbaServed=prepared{counts.Item1},scaledInCallback{counts.Item2}");
         }
 
         // a camera frame as the library hands it to a consumer off the UI thread
@@ -919,8 +923,10 @@ public static class SampleAutomation
     /// path, the reference) and the difference is reported per case: display orientation, the three extra rotations of
     /// OutputOrientation.Portrait, and a centre crop of 0.6 (each case is called the same way on both sides).
     /// </summary>
-    sealed class RawRgbaProbe(string size, AppCamera cam, bool check)
+    sealed class RawRgbaProbe(string size, AppCamera cam, bool check, bool identity = false)
     {
+        long _idChecks, _idMatches, _idMismatches, _idUnreadable;
+        string _idFirstMismatch;
         readonly int _w = int.Parse(size.Split('x')[0]), _h = int.Parse(size.Split('x')[1]);
         readonly byte[] _buffer = new byte[int.Parse(size.Split('x')[0]) * int.Parse(size.Split('x')[1]) * 4];
         readonly byte[] _reference = new byte[int.Parse(size.Split('x')[0]) * int.Parse(size.Split('x')[1]) * 4];
@@ -952,6 +958,8 @@ public static class SampleAutomation
                 sum += 0.299 * _buffer[i] + 0.587 * _buffer[i + 1] + 0.114 * _buffer[i + 2];
             _luma = sum / (_buffer.Length / (4 * 7));
 
+            if (identity && frame.RawImage != null)
+                CheckIdentity(frame.RawImage);
             if (!check || frame.RawImage == null || _checks++ % 3 != 0)
                 return;
             // the same frame through the old path: a raster copy never takes the GPU shortcut
@@ -979,8 +987,62 @@ public static class SampleAutomation
             _errors[c.Name] = e;
         }
 
+        /// <summary>
+        /// The frame number stamped into the frame by the library's test knob (DRAWNUI_CAMERA_TEST_STAMP=1), read from the
+        /// bytes TryGetRgba returned and from the frame the callback got (the one drawn next): they must be the same.
+        /// </summary>
+        void CheckIdentity(SKImage drawn)
+        {
+            _idChecks++;
+            using var raster = drawn.IsTextureBacked ? drawn.ToRasterImage() : null;
+            using var bitmap = SKBitmap.FromImage(raster ?? drawn);
+            var srcW = (float)bitmap.Width;
+            var srcH = (float)bitmap.Height;
+            var fromDrawn = DecodeStamp((x, y) => Luma(bitmap.GetPixel(x, y)), srcW, srcH, new SKRect(0, 0, srcW, srcH), srcW, srcH);
+            var crop = CenterCrop(srcW, srcH, _w, _h);
+            var fromBytes = DecodeStamp((x, y) =>
+            {
+                var i = (Math.Clamp(y, 0, _h - 1) * _w + Math.Clamp(x, 0, _w - 1)) * 4;
+                return 0.299 * _buffer[i] + 0.587 * _buffer[i + 1] + 0.114 * _buffer[i + 2];
+            }, srcW, srcH, crop, _w, _h);
+            if (fromDrawn < 0 || fromBytes < 0)
+                _idUnreadable++;
+            else if (fromDrawn == fromBytes)
+                _idMatches++;
+            else
+            {
+                _idMismatches++;
+                _idFirstMismatch ??= $"drawn{fromDrawn}-bytes{fromBytes}";
+            }
+        }
+
+        static double Luma(SKColor c) => 0.299 * c.Red + 0.587 * c.Green + 0.114 * c.Blue;
+
+        static SKRect CenterCrop(float w, float h, int tw, int th)
+        {
+            float sa = w / h, ta = (float)tw / th;
+            if (Math.Abs(sa - ta) < 0.0001f) return new SKRect(0, 0, w, h);
+            if (sa > ta) { var cw = h * ta; var l = (w - cw) / 2; return new SKRect(l, 0, l + cw, h); }
+            var ch = w / ta; var t = (h - ch) / 2; return new SKRect(0, t, w, t + ch);
+        }
+
+        static long DecodeStamp(Func<int, int, double> luma, float srcW, float srcH, SKRect crop, float outW, float outH)
+        {
+            long value = 0;
+            for (var i = 0; i < 20; i++)
+            {
+                var cx = srcW * 0.3f + (i + 0.5f) * srcW * 0.02f;
+                var cy = srcH * 0.05f;
+                var l = luma((int)((cx - crop.Left) * outW / crop.Width), (int)((cy - crop.Top) * outH / crop.Height));
+                if (l > 180) value |= 1L << i;
+                else if (l > 70) return -1; // not a stamp cell
+            }
+            return value;
+        }
+
         public override string ToString() => string.Create(CultureInfo.InvariantCulture,
             $"ok{_ok}/{_calls},avgMs{(_calls > 0 ? _ms / _calls : 0):0.00},maxMs{_maxMs:0.00},thread{(_onUi ? "UI" : "")}{(_offUi ? "Other" : "")},luma{_luma:0.0}") +
+            (!identity ? "" : string.Create(CultureInfo.InvariantCulture, $" frameIdentity=checked{_idChecks},same{_idMatches},different{_idMismatches},unreadable{_idUnreadable}{(_idFirstMismatch != null ? $",first:{_idFirstMismatch}" : "")}")) +
             (_errors.Count == 0 ? "" : " rgbaError=" + string.Join(";", _errors.Select(kv => string.Create(CultureInfo.InvariantCulture,
                 $"{kv.Key}:frames{kv.Value.Count},mean{kv.Value.Sum / Math.Max(1, kv.Value.Values):0.00},max{kv.Value.Max},over8:{100.0 * kv.Value.Over8 / Math.Max(1, kv.Value.Values):0.00}%"))));
     }

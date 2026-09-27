@@ -450,8 +450,16 @@ public static unsafe class SoftwareBitmapPixels
             LastD3DError = $"surface is {surface?.GetType().FullName ?? "null"}, not IWinRTObject";
             return IntPtr.Zero;
         }
+        return GetDxgiInterface(winrt.NativeObject.ThisPtr, iid);
+    }
+
+    /// <summary>
+    /// <see cref="GetDxgiInterface(object, Guid)"/> on a raw IDirect3DSurface pointer.
+    /// </summary>
+    internal static IntPtr GetDxgiInterface(IntPtr surface, Guid iid)
+    {
         var g = IidDxgiInterfaceAccess;
-        var qi = Marshal.QueryInterface(winrt.NativeObject.ThisPtr, ref g, out var access);
+        var qi = Marshal.QueryInterface(surface, ref g, out var access);
         if (qi != 0 || access == IntPtr.Zero)
         {
             LastD3DError = $"QI IDirect3DDxgiInterfaceAccess hr=0x{qi:X8}";
@@ -482,6 +490,20 @@ public static unsafe class SoftwareBitmapPixels
     internal static IntPtr GetDxgiTexture(object surface, Guid textureIid, out uint subresource)
     {
         subresource = 0;
+        if (surface is not IWinRTObject winrt)
+        {
+            LastD3DError = $"surface is {surface?.GetType().FullName ?? "null"}, not IWinRTObject";
+            return IntPtr.Zero;
+        }
+        return GetDxgiTexture(winrt.NativeObject.ThisPtr, textureIid, out subresource);
+    }
+
+    /// <summary>
+    /// <see cref="GetDxgiTexture(object, Guid, out uint)"/> on a raw IDirect3DSurface pointer.
+    /// </summary>
+    internal static IntPtr GetDxgiTexture(IntPtr surface, Guid textureIid, out uint subresource)
+    {
+        subresource = 0;
         var surface2 = GetDxgiInterface(surface, IidDxgiSurface2);
         if (surface2 != IntPtr.Zero)
         {
@@ -502,6 +524,53 @@ public static unsafe class SoftwareBitmapPixels
             }
         }
         return GetDxgiInterface(surface, textureIid);
+    }
+
+    static readonly Guid IidMediaFrameReader = new("E4C94395-2028-48ED-90B0-D1C1B162E24C");
+    const int SlotTryAcquireLatestFrame = 8; // IMediaFrameReader
+    const int SlotGetVideoMediaFrame = 12;   // IMediaFrameReference
+    const int SlotGetDirect3DSurface = 9;    // IVideoMediaFrame
+
+    /// <summary>
+    /// The newest frame of a frame reader and its Direct3D surface, through raw COM
+    /// (TryAcquireLatestFrame, VideoMediaFrame, Direct3DSurface): unlike the projected calls, no object is created, cast
+    /// by reflection or left to the finalizer per frame. Returns the frame reference, zero when there is no frame;
+    /// <paramref name="surface"/> is zero when the frame has none. Both go to <see cref="CloseFrame"/>.
+    /// </summary>
+    internal static IntPtr AcquireLatestSurface(object reader, out IntPtr surface)
+    {
+        surface = IntPtr.Zero;
+        if (reader is not IWinRTObject winrt)
+            return IntPtr.Zero;
+        var frameReader = QueryInterface(winrt.NativeObject.ThisPtr, IidMediaFrameReader);
+        if (frameReader == IntPtr.Zero)
+            return IntPtr.Zero;
+        IntPtr frame;
+        var hr = ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(frameReader, SlotTryAcquireLatestFrame))(frameReader, &frame);
+        Marshal.Release(frameReader);
+        if (hr != 0 || frame == IntPtr.Zero)
+            return IntPtr.Zero;
+        IntPtr video;
+        if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(frame, SlotGetVideoMediaFrame))(frame, &video) == 0 && video != IntPtr.Zero)
+        {
+            IntPtr d3d;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(video, SlotGetDirect3DSurface))(video, &d3d) == 0)
+                surface = d3d;
+            Marshal.Release(video);
+        }
+        return frame;
+    }
+
+    /// <summary>
+    /// Closes and releases what <see cref="AcquireLatestSurface"/> returned, so the frame's buffer goes back to Media
+    /// Foundation now.
+    /// </summary>
+    internal static void CloseFrame(IntPtr frame, IntPtr surface)
+    {
+        Close(surface);
+        ReleaseRef(ref surface);
+        Close(frame);
+        ReleaseRef(ref frame);
     }
 
     static void* Slot(IntPtr obj, int index) => (*(void***)obj)[index];
@@ -1433,22 +1502,23 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
         try
         {
+            if (_gpuCapture)
+            {
+                // converted on the GPU into the preview ring, synchronously; the frame is taken through raw COM
+                ProcessGpuFrame(sender);
+                withError = null;
+                return;
+            }
+
             using var frame = sender.TryAcquireLatestFrame();
             if (frame?.VideoMediaFrame != null)
             {
                 var videoFrame = frame.VideoMediaFrame;
 
-                if (_gpuCapture)
-                {
-                    ProcessGpuFrame(videoFrame); // converted on the GPU into the preview ring, synchronously
-                }
-                else
-                {
-                    // The software bitmap first, read through raw COM (SoftwareBitmapPixels) so no projected
-                    // SoftwareBitmap is created (its constructor adds 1.2 MB of GC pressure per frame); a frame that
-                    // has no software bitmap goes through its Direct3D surface. Neither is touched here.
-                    ProcessFrameAsync(videoFrame);
-                }
+                // The software bitmap first, read through raw COM (SoftwareBitmapPixels) so no projected
+                // SoftwareBitmap is created (its constructor adds 1.2 MB of GC pressure per frame); a frame that
+                // has no software bitmap goes through its Direct3D surface. Neither is touched here.
+                ProcessFrameAsync(videoFrame);
             }
             withError = null;
         }

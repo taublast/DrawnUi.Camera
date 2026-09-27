@@ -207,10 +207,11 @@ public partial class NativeCamera
     }
 
     /// <summary>
-    /// Camera thread, for each frame of a GPU session: converts it into the preview ring, feeds the recording ring, and
-    /// hands CPU pixels only to consumers that asked for them.
+    /// Camera thread, for each frame of a GPU session: takes the newest frame of the reader, converts it into the preview
+    /// ring, feeds the recording ring, and hands CPU pixels only to consumers that asked for them. The frame and its surface
+    /// are handled as raw COM pointers: projected ones cost a reflection cast and a finalizer per frame.
     /// </summary>
-    unsafe void ProcessGpuFrame(VideoMediaFrame videoFrame)
+    unsafe void ProcessGpuFrame(MediaFrameReader reader)
     {
         if (Interlocked.Exchange(ref _gpuFrameBusy, 1) == 1)
         {
@@ -218,10 +219,14 @@ public partial class NativeCamera
             return;
         }
         var t0 = Stopwatch.GetTimestamp();
+        var frame = IntPtr.Zero;
+        var surface = IntPtr.Zero;
         try
         {
-            using var surface = videoFrame.Direct3DSurface;
-            if (surface == null)
+            frame = SoftwareBitmapPixels.AcquireLatestSurface(reader, out surface);
+            if (frame == IntPtr.Zero)
+                return;
+            if (surface == IntPtr.Zero)
             {
                 DisableGpuCapture("the camera delivers CPU frames, not Direct3D surfaces");
                 return;
@@ -283,6 +288,7 @@ public partial class NativeCamera
         }
         finally
         {
+            SoftwareBitmapPixels.CloseFrame(frame, surface);
             Volatile.Write(ref _gpuFrameBusy, 0);
         }
     }

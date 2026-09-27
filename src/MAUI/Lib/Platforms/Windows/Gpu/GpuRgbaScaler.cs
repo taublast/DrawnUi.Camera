@@ -26,6 +26,7 @@ internal sealed unsafe class GpuRgbaScaler : IDisposable
     ID3D11VideoProcessorOutputView* _outputView;
     DXGI_FORMAT _outputFormat;
     Request _size;
+    Request? _stateFor; // the request the processor's rects and rotation were set for (null after a new processor)
     readonly ID3D11Texture2D*[] _staging = new ID3D11Texture2D*[GpuFrameRing.Slots];
     readonly Request?[] _prepared = new Request?[GpuFrameRing.Slots];
     readonly ulong[] _preparedFrame = new ulong[GpuFrameRing.Slots]; // the ring's publish counter of the frame prepared
@@ -81,16 +82,20 @@ internal sealed unsafe class GpuRgbaScaler : IDisposable
         slotTexture->GetDesc(&desc);
         Ensure(desc.Width, desc.Height, request);
 
-        // the crop is chosen for the size before the rotation, as the raster path does
-        SkiaCamera.GetDrawSizeForOutputRotation(request.Width, request.Height, request.Rotation, out var drawWidth, out var drawHeight);
-        var crop = SkiaCamera.GetCenterCropSourceRect((int)desc.Width, (int)desc.Height, drawWidth, drawHeight, request.CropRatio);
-        var source = new RECT { left = (int)MathF.Round(crop.Left), top = (int)MathF.Round(crop.Top), right = (int)MathF.Round(crop.Right), bottom = (int)MathF.Round(crop.Bottom) };
-        var target = new RECT { left = 0, top = 0, right = request.Width, bottom = request.Height };
-        _videoContext->VideoProcessorSetStreamSourceRect(_vp, 0, BOOL.TRUE, &source);
-        _videoContext->VideoProcessorSetStreamDestRect(_vp, 0, BOOL.TRUE, &target);
-        _videoContext->VideoProcessorSetOutputTargetRect(_vp, BOOL.TRUE, &target);
-        _videoContext->VideoProcessorSetStreamRotation(_vp, 0, request.Rotation != 0 ? BOOL.TRUE : BOOL.FALSE,
-            (D3D11_VIDEO_PROCESSOR_ROTATION)(request.Rotation / 90)); // clockwise, as the raster path's canvas rotation
+        if (_stateFor != request) // the processor keeps its state: set once per request, not per frame
+        {
+            // the crop is chosen for the size before the rotation, as the raster path does
+            SkiaCamera.GetDrawSizeForOutputRotation(request.Width, request.Height, request.Rotation, out var drawWidth, out var drawHeight);
+            var crop = SkiaCamera.GetCenterCropSourceRect((int)desc.Width, (int)desc.Height, drawWidth, drawHeight, request.CropRatio);
+            var source = new RECT { left = (int)MathF.Round(crop.Left), top = (int)MathF.Round(crop.Top), right = (int)MathF.Round(crop.Right), bottom = (int)MathF.Round(crop.Bottom) };
+            var target = new RECT { left = 0, top = 0, right = request.Width, bottom = request.Height };
+            _videoContext->VideoProcessorSetStreamSourceRect(_vp, 0, BOOL.TRUE, &source);
+            _videoContext->VideoProcessorSetStreamDestRect(_vp, 0, BOOL.TRUE, &target);
+            _videoContext->VideoProcessorSetOutputTargetRect(_vp, BOOL.TRUE, &target);
+            _videoContext->VideoProcessorSetStreamRotation(_vp, 0, request.Rotation != 0 ? BOOL.TRUE : BOOL.FALSE,
+                (D3D11_VIDEO_PROCESSOR_ROTATION)(request.Rotation / 90)); // clockwise, as the raster path's canvas rotation
+            _stateFor = request;
+        }
 
         var stream = new D3D11_VIDEO_PROCESSOR_STREAM { Enable = BOOL.TRUE, pInputSurface = InputView(slotTexture) };
         GpuDevices.ThrowIfFailed(_videoContext->VideoProcessorBlt(_vp, _outputView, 0, 1, &stream), "VideoProcessorBlt ML input");
@@ -265,6 +270,7 @@ internal sealed unsafe class GpuRgbaScaler : IDisposable
         if (_vp != null)
             _vp->Release();
         _vp = null;
+        _stateFor = null;
         if (_enum != null)
             _enum->Release();
         _enum = null;

@@ -62,22 +62,39 @@ internal sealed unsafe class GpuFrameConverter : IDisposable
         EnsureProcessor(inDesc, outDesc);
         SetColour(inDesc, nominalRange, yuvMatrix);
 
-        // input views are made per frame: Media Foundation may hand out a new texture object for every frame, and a
-        // cached view would keep each of them alive
-        var inputDesc = new D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC { ViewDimension = D3D11_VPIV_DIMENSION.D3D11_VPIV_DIMENSION_TEXTURE2D };
-        inputDesc.Texture2D.MipSlice = 0;
-        inputDesc.Texture2D.ArraySlice = inDesc.ArraySize > 1 ? subresource / Math.Max(1, inDesc.MipLevels) : 0;
-        ID3D11VideoProcessorInputView* input;
-        GpuDevices.ThrowIfFailed(_videoDevice->CreateVideoProcessorInputView((ID3D11Resource*)source, _enum, &inputDesc, &input), "camera frame input view");
-        try
+        var stream = new D3D11_VIDEO_PROCESSOR_STREAM { Enable = BOOL.TRUE, pInputSurface = InputView(source, inDesc.ArraySize > 1 ? subresource / Math.Max(1, inDesc.MipLevels) : 0) };
+        GpuDevices.ThrowIfFailed(_videoContext->VideoProcessorBlt(_vp, OutputView(target), 0, 1, &stream), "VideoProcessorBlt camera frame -> BGRA");
+    }
+
+    // Media Foundation cycles a small pool of frame textures (3-4 seen), so their input views are kept, keyed by texture
+    // and array slice. The cache is bounded: a source that hands out new textures all the time only refills it.
+    const int MaxInputViews = 8;
+    readonly Dictionary<(nint Texture, uint Slice), nint> _inputViews = new();
+
+    ID3D11VideoProcessorInputView* InputView(ID3D11Texture2D* source, uint slice)
+    {
+        if (_inputViews.TryGetValue(((nint)source, slice), out var cached))
+            return (ID3D11VideoProcessorInputView*)cached;
+        if (_inputViews.Count >= MaxInputViews)
+            ReleaseInputViews();
+        var desc = new D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC { ViewDimension = D3D11_VPIV_DIMENSION.D3D11_VPIV_DIMENSION_TEXTURE2D };
+        desc.Texture2D.MipSlice = 0;
+        desc.Texture2D.ArraySlice = slice;
+        ID3D11VideoProcessorInputView* view;
+        GpuDevices.ThrowIfFailed(_videoDevice->CreateVideoProcessorInputView((ID3D11Resource*)source, _enum, &desc, &view), "camera frame input view");
+        source->AddRef(); // the key stays this texture: its address cannot be reused while it is cached
+        _inputViews[((nint)source, slice)] = (nint)view;
+        return view;
+    }
+
+    void ReleaseInputViews()
+    {
+        foreach (var view in _inputViews)
         {
-            var stream = new D3D11_VIDEO_PROCESSOR_STREAM { Enable = BOOL.TRUE, pInputSurface = input };
-            GpuDevices.ThrowIfFailed(_videoContext->VideoProcessorBlt(_vp, OutputView(target), 0, 1, &stream), "VideoProcessorBlt camera frame -> BGRA");
+            ((ID3D11VideoProcessorInputView*)view.Value)->Release();
+            ((ID3D11Texture2D*)view.Key.Texture)->Release();
         }
-        finally
-        {
-            input->Release();
-        }
+        _inputViews.Clear();
     }
 
     void EnsureProcessor(in D3D11_TEXTURE2D_DESC input, in D3D11_TEXTURE2D_DESC output)
@@ -191,6 +208,7 @@ internal sealed unsafe class GpuFrameConverter : IDisposable
 
     void ReleaseProcessor()
     {
+        ReleaseInputViews(); // views of the enumerator released below
         foreach (var view in _outputViews)
         {
             ((ID3D11VideoProcessorOutputView*)view.Value)->Release();

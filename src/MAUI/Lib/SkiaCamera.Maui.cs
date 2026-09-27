@@ -2058,7 +2058,7 @@ public partial class SkiaCamera : SkiaControl
     public SKRect DisplayRect { get; private set; } = SKRect.Empty;
 
     /// <summary>
-    /// Platform hook at the start of disposal, before anything is torn down (Windows aborts a running recording there).
+    /// Platform hook at the start of disposal, before anything is torn down (Windows finalizes a running recording there).
     /// </summary>
     partial void OnWillDisposeWhileRecording();
 

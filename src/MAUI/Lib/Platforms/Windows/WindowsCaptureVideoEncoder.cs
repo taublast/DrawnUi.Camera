@@ -135,7 +135,13 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
             hnsTime -= baseHns;
             if (hnsTime < 0) hnsTime = 0;
         }
-        // In normal/live mode: hnsTime is already in video time base (after offset correction above)
+        else if (!AudioOnly)
+        {
+            // live: the same origin as the video, the first frame written; audio captured before it is dropped
+            hnsTime -= _firstVideoFrameTimestamp.Ticks;
+            if (hnsTime < 0)
+                return;
+        }
 
         //Debug.WriteLine($"[WindowsCaptureVideoEncoder #{_instanceId}] WriteAudioSample WRITE: timestamp={timestampNs / 1_000_000.0:F1}ms, hnsTime={hnsTime / 10000.0:F1}ms, length={pcmData.Length}, PreRecMode={IsPreRecordingMode}, hasNativeEncoder={_nativeAudioEncoder != IntPtr.Zero}");
 
@@ -322,6 +328,10 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
             {
                 var baseTimestamp = _isBufferA ? _bufferAFirstTimestamp : _bufferBFirstTimestamp;
                 sampleTime -= (long)(baseTimestamp.TotalSeconds * 10_000_000L);
+            }
+            else
+            {
+                sampleTime -= _firstVideoFrameTimestamp.Ticks; // the file starts with its first frame, not with the encoder's start
             }
             if (sampleTime <= _lastSampleTime100ns)
                 sampleTime = _lastSampleTime100ns + _rtDurationPerFrame;
@@ -828,6 +838,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                 var isBufferA = _isBufferA;
                 var bufferAFirstTimestamp = _bufferAFirstTimestamp;
                 var bufferBFirstTimestamp = _bufferBFirstTimestamp;
+                var firstVideoFrameTimestamp = _firstVideoFrameTimestamp;
 
                 // We need to copy the bitmap data to a byte array or similar to pass to the background thread safely
                 // OR we can just do the memory copy inside the Task.Run if we keep 'source' alive.
@@ -888,9 +899,13 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                                 TimeSpan baseTimestamp = isBufferA ? bufferAFirstTimestamp : bufferBFirstTimestamp;
                                 sampleTime -= (long)(baseTimestamp.TotalSeconds * 10_000_000L);
                             }
-                            // In normal/live mode: Use absolute timestamps (no adjustment)
-                            // MediaComposition will handle timeline alignment automatically
-                            
+                            else
+                            {
+                                // live: the file starts with its first frame, not with the encoder's start (the encoder's
+                                // initialization used to open every file with a gap); audio uses the same origin
+                                sampleTime -= firstVideoFrameTimestamp.Ticks;
+                            }
+
                             if (sampleTime <= _lastSampleTime100ns)
                             {
                                 sampleTime = _lastSampleTime100ns + rtDurationPerFrame;

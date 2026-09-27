@@ -276,7 +276,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
     /// <summary>
     /// True when frames are composed and encoded on the GPU (see the internal constructor).
     /// </summary>
-    public bool IsGpu => _gpu != null;
+    internal bool IsGpu => _gpu != null;
 
     /// <summary>
     /// GPU mode, recorder thread: converts the composed frame and writes it with the same timestamp rules as
@@ -366,12 +366,12 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
     /// <summary>
     /// GPU mode: the transforms the sink writer uses for the video stream (converter, encoder, hardware or software).
     /// </summary>
-    public string VideoTransforms { get; private set; }
+    internal string VideoTransforms { get; private set; }
 
     /// <summary>
     /// GPU mode: frames dropped because the encoder held every NV12 sample.
     /// </summary>
-    public long GpuSamplesUnavailable { get; private set; }
+    internal long GpuSamplesUnavailable { get; private set; }
 
 
     public bool IsRecording => _isRecording;

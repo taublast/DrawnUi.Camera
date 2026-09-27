@@ -479,7 +479,7 @@ public static unsafe class SoftwareBitmapPixels
     /// (Media Foundation may hand out one slice of a texture array), via <c>IDXGISurface2::GetResource</c>.
     /// Falls back to the texture itself with subresource 0. The caller releases the returned reference.
     /// </summary>
-    public static IntPtr GetDxgiTexture(object surface, Guid textureIid, out uint subresource)
+    internal static IntPtr GetDxgiTexture(object surface, Guid textureIid, out uint subresource)
     {
         subresource = 0;
         var surface2 = GetDxgiInterface(surface, IidDxgiSurface2);

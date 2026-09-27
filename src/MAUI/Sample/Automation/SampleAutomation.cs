@@ -459,6 +459,7 @@ public static class SampleAutomation
         Log("StartVideoRecording called");
         await Task.Run(() => cam.StartVideoRecording());
         Log($"recording {(pre > 0 ? "live " : "")}for {seconds} s, IsRecording={cam.IsRecording}");
+        var cost = await RecordingCost.StartAsync(cam);
         var restartAt = double.Parse(Arg("--restart-during") ?? "-1", CultureInfo.InvariantCulture);
         if (restartAt >= 0 && restartAt < seconds)
         {
@@ -519,6 +520,7 @@ public static class SampleAutomation
             await Task.Delay(TimeSpan.FromSeconds(seconds));
         }
         var pace = Pace(paceFrom, Clock.Elapsed.TotalMilliseconds);
+        var costText = cost.Finish(cam);
         var ui = await uiGaps;
 
         await Task.Run(() => cam.StopVideoRecording(abort));
@@ -555,6 +557,7 @@ public static class SampleAutomation
         }
 
         result.Append($" mode=record {report} preview={pace} uiThread={ui} file=\"{copy}\" bytes={(copy != null ? new FileInfo(copy).Length : 0)} duration={video?.Duration.TotalSeconds:0.00}");
+        result.Append(" " + costText);
         if (rawRgba != null)
         {
             cam.RawFrameProbe = null;
@@ -914,6 +917,47 @@ public static class SampleAutomation
         stopHeartbeat.Cancel();
         result.Append($" mode=restart-test toggles={count} settle-checks={checks} failures={fails} uiThread={await ui}");
         return fails == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// What a recording costs while it runs: UI-thread CPU per preview frame, the GPU recorder thread's CPU per second,
+    /// the process CPU per second, and the recorder's GPU time per recording frame (timestamp queries on its device).
+    /// </summary>
+    sealed class RecordingCost
+    {
+        uint _uiThread, _recorderThread;
+        TimeSpan _ui0, _recorder0, _process0;
+        long _frames0;
+        double _t0;
+        object _recorder;
+
+        public static async Task<RecordingCost> StartAsync(SkiaCamera cam)
+        {
+            var cost = new RecordingCost { _uiThread = await MainThread.InvokeOnMainThreadAsync(GetCurrentThreadId) };
+            cost._recorder = typeof(SkiaCamera).GetField("_gpuRecorder", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(cam);
+            cost._recorderThread = cost._recorder?.GetType().GetProperty("NativeThreadId")?.GetValue(cost._recorder) is uint id ? id : 0;
+            cost._recorder?.GetType().GetMethod("TakeGpuTiming")?.Invoke(cost._recorder, null); // reset
+            using var process = Process.GetCurrentProcess();
+            cost._ui0 = ThreadCpu(process, cost._uiThread);
+            cost._recorder0 = cost._recorderThread != 0 ? ThreadCpu(process, cost._recorderThread) : TimeSpan.Zero;
+            cost._process0 = process.TotalProcessorTime;
+            cost._frames0 = Interlocked.Read(ref _previewFrames);
+            cost._t0 = Clock.Elapsed.TotalSeconds;
+            return cost;
+        }
+
+        public string Finish(SkiaCamera cam)
+        {
+            using var process = Process.GetCurrentProcess();
+            var seconds = Math.Max(0.001, Clock.Elapsed.TotalSeconds - _t0);
+            var frames = Math.Max(1, Interlocked.Read(ref _previewFrames) - _frames0);
+            var ui = ThreadCpu(process, _uiThread) - _ui0;
+            var recorder = _recorderThread != 0 ? ThreadCpu(process, _recorderThread) - _recorder0 : TimeSpan.Zero;
+            var cpu = process.TotalProcessorTime - _process0;
+            var gpu = _recorder?.GetType().GetMethod("TakeGpuTiming")?.Invoke(_recorder, null) is ValueTuple<double, double, long> g ? g : default;
+            return string.Create(CultureInfo.InvariantCulture,
+                $"cost=uiCpuMsPerPreviewFrame{ui.TotalMilliseconds / frames:0.00},recorderCpuMsPerSec{recorder.TotalMilliseconds / seconds:0.0},processCpuMsPerSec{cpu.TotalMilliseconds / seconds:0.0},recorderGpuMsPerFrame{gpu.Item1:0.00}(max{gpu.Item2:0.00},n{gpu.Item3})");
+        }
     }
 
     /// <summary>

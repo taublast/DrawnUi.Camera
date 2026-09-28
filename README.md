@@ -27,24 +27,28 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.6.171
+## What's New  1.10.6.211
 
- * Built on DrawnUi 1.10.6.17 (`DrawnUi.Maui` / `DrawnUi.Net`), up from 1.10.6.16.
- * Windows: the D3D preview path no longer breaks once another library opens a Direct3D device in the process (DirectML through ONNX Runtime, for one). The `ID3D11Device` / `ID3D11DeviceContext` / `ID3D11Texture2D` COM interop declared the methods that really return `void` (`GetDevice`, `GetDesc`, `GetImmediateContext`, `CopyResource`, `Unmap`, the state setters) without `[PreserveSig]`, so the interop stub read whatever the return register happened to hold as an HRESULT. That was harmless until D3D12/DirectML was loaded, after which `GetImmediateContext` "failed" on every frame, the conversion fell back to the projected `SoftwareBitmap` copy, and the CsWinRT memory-pressure GC storm from 1.10.6.162 came back (twenty induced gen2 collections a second, scrolling stuttered in every window) - and stayed even after the other library went idle. Every void method now carries `[PreserveSig]`; the three value-returning getters (`GetFeatureLevel`, `GetCreationFlags`, `GetExceptionMode`) are declared with their real signatures.
-
-## What's New  1.10.6.162
-
- * Windows: the app no longer runs a full garbage collection twenty times a second while the camera is on. Every preview frame created a projected `SoftwareBitmap` (and its `BitmapBuffer`), and CsWinRT's constructors for those classes call `GC.AddMemoryPressure(1.2 MB)` each, so at camera frame rate the GC kept inducing gen2 collections that paused every thread, the UI included - scrolling in any window stuttered while the camera ran. The frame's pixels are now read through the raw COM vtables (`SoftwareBitmapPixels`: IVideoMediaFrame, ISoftwareBitmap, IBitmapBuffer, IMemoryBufferByteAccess), no projected object per frame, and the `SKImage` keeps the buffer locked until it is disposed instead of reading memory that was already unlocked. Pre-recording and non-BGRA formats still take the projected path.
- * Windows: switching the camera off now hands the device back. Stopping only paused the frame reader, so the `MediaCapture` stayed open and Windows kept showing the camera as in use (the privacy indicator and the webcam light stayed on, other apps found it busy) until the control was disposed. `Stop(force)` now disposes the frame reader and the `MediaCapture` (`ReleaseHardware()`), `SetupHardware()` releases any previous capture before creating a new one, `Dispose()` goes through the same path, and `Start()` awaits `Setup()` instead of firing it and moving on. Recording is not interrupted: the device is kept while a video is being written.
+ * Built on DrawnUi 1.10.6.21 (`DrawnUi.Maui` / `DrawnUi.Net`).
+ * Windows: the camera preview and video recording now run on the GPU (`UseGpuProcessing`, on by default). Frames reach the screen and the encoder without a CPU copy, hardware video encoders are used, and CPU use drops. When the machine can't do it (another GPU, a driver refusing the device) the camera falls back to the previous path by itself, never a black preview.
+ * Windows now behaves like Android and iOS while recording: the preview shows the recording's own frames (`MirrorRecordingToPreview`), and disposing the camera in the middle of a recording finishes the file instead of crashing.
+ * Windows: recordings start with their first frame, the preview stays live while a recording starts, and switching the camera off and on quickly no longer kills the preview.
+ * Windows: ML frame access (`TryGetRgba`) on GPU frames is prepared on the camera thread, so it costs the UI thread about half as much (1.6 ms instead of 2.9 ms at 1080p), and the bytes always belong to the frame you got.
+ * Windows: a camera switched on before its canvas first draws still gets the GPU path.
+ * Windows: less work per camera frame, and each frame's Direct3D surface is released right after use.
+ * Windows: `GetPreviewImage` never waits for a frame, and a failed camera start or stop no longer raises `OnError`, both as on Android and iOS.
 
 ## Previously 
 
+ * Windows: the preview no longer breaks when another library in the app opens Direct3D (ONNX Runtime with DirectML, for example), which used to bring back heavy garbage collection and stutter.
+ * Windows: no more full garbage collections twenty times a second while the camera is on, so scrolling no longer stutters in any window.
+ * Windows: switching the camera off hands the device back, so the webcam light and privacy indicator go off and other apps can use it. A running recording keeps the device.
  * iOS: saved photos keep their metadata. Photos showed "No camera information" and "No lens information" because iOS re-serialized the EXIF while importing raw data and dropped every value stored out of line - make, model, lens make and model, exposure time, aperture, focal length. The asset now goes to Photos as a file, which it stores byte for byte.
  * iOS: EXIF, TIFF and GPS are written with ImageIO (`AppleJpegMetadata`) instead of the hand-built segment in `JpegExifInjector`, which stays as fallback and on other platforms. The compressed image is copied from the source, so nothing is re-encoded and quality is unchanged.
  * iOS: fixed a crash when recording started while preview audio was still starting, e.g. record tapped right after switching `CaptureMode` to Video. Stopping preview audio disposed the `AVAudioEngine` under its running setup (`EXC_BAD_ACCESS` in `outputFormatForBus:`). `AudioCaptureApple` now serializes engine setup and cleanup, and a preview audio start that was stopped meanwhile gives up instead of leaving an engine running.
  * iOS: selfie video mirroring follows `MirrorSavedSelfiePhoto` like the still. The encoder always mirrored front-camera frames, so with `MirrorSavedSelfiePhoto=true` a clip came out flipped against the screen. Applies to the GPU processing path (`CaptureFrameCore`, zero-copy and CPU fallback) and to the native `AVCaptureMovieFileOutput` connection (`VideoMirrored`). While encoder frames feed the preview the display flip is inverted for that time, so the screen looks the same before, during and after recording.
-* Fix Android not using audio mode for video
- 
+ * Android: video recording uses audio mode again.
+
 ## Extending SkiaCamera
 
 Subclass `SkiaCamera` to hook into lifecycle and GPU events:

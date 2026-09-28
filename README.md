@@ -31,9 +31,8 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
  * Built on DrawnUi 1.10.6.21 (`DrawnUi.Maui` / `DrawnUi.Net`).
  * Windows: the camera preview and video recording now run on the GPU (`UseGpuProcessing`, on by default). Frames reach the screen and the encoder without a CPU copy, hardware video encoders are used, and CPU use drops. When the machine can't do it (another GPU, a driver refusing the device) the camera falls back to the previous path by itself, never a black preview.
- * Windows now behaves like Android and iOS while recording: the preview shows the recording's own frames (`MirrorRecordingToPreview`), and disposing the camera in the middle of a recording finishes the file instead of crashing.
  * Windows: recordings start with their first frame, the preview stays live while a recording starts, and switching the camera off and on quickly no longer kills the preview.
- * Windows: ML frame access (`TryGetRgba`) on GPU frames is prepared on the camera thread, so it costs the UI thread about half as much (1.6 ms instead of 2.9 ms at 1080p), and the bytes always belong to the frame you got.
+ * Windows: ML frame access (`TryGetRgba`) on GPU frames is prepared on the camera thread, so it costs the UI thread about half as much (ex. 1.6 ms instead of 2.9 ms at 1080p), and the bytes always belong to the frame you got.
  * Windows: a camera switched on before its canvas first draws still gets the GPU path.
  * Windows: less work per camera frame, and each frame's Direct3D surface is released right after use.
  * Windows: `GetPreviewImage` never waits for a frame, and a failed camera start or stop no longer raises `OnError`, both as on Android and iOS.

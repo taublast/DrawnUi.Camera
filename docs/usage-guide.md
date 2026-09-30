@@ -1027,3 +1027,39 @@ Notes:
 - While recording with `UseRecordingFramesForPreview`, the preview shows encoder frames, which are
   center-cropped to the video aspect. When the sensor format has another aspect, mapped points are
   offset during the recording. Hide code overlays while `IsRecording` if that matters to you.
+
+### Passkey sign-in codes
+
+A site that offers "sign in with a passkey on another device" shows a QR code. Its text is `FIDO:/`
+followed by digits. The system can take it from there: it shows its own passkey sheet, checks that
+the two devices are near each other and signs the user in. Your app only passes the code on and
+never sees a key.
+
+| Member | Description |
+|--------|-------------|
+| `DetectedCode.IsPasskeySignIn` | True when the code's text is `FIDO:/` plus digits only. |
+| `SkiaCamera.IsPasskeySignInSupported` | True where the system can take such a code. iOS 16 and later for now. |
+| `SkiaCamera.StartPasskeySignInAsync(code)` | Hands the code to the system. Returns false when it is not a passkey code, the platform cannot do it, or the system refused. Safe to call from any thread. |
+
+```csharp
+void OnCodesDetected(object sender, IReadOnlyList<DetectedCode> codes)
+{
+    foreach (var code in codes)
+    {
+        if (code.IsPasskeySignIn && SkiaCamera.IsPasskeySignInSupported)
+        {
+            MainThread.BeginInvokeOnMainThread(() => ShowPasskeyButton(code));   // your UI
+            return;
+        }
+    }
+}
+
+// when the user taps your button
+async void OnPasskeyTapped(DetectedCode code)
+{
+    var started = await SkiaCamera.StartPasskeySignInAsync(code);
+}
+```
+
+Start it only from a user action such as a tap, never by itself when the code is detected. The code
+is short-lived: the site replaces it after a while, so use the one detected last.

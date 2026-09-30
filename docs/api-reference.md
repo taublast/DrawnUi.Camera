@@ -56,6 +56,10 @@ public CameraCodeTypes CodeDetection { get; set; } // Formats to detect in the l
 public static bool IsCodeDetectionSupported { get; }  // Platform can detect codes (currently iOS only)
 public SKRect DisplayRect { get; }                 // Drawn preview image rect, canvas pixels
 public bool TryMapPreviewPoint(SKPoint normalized, out SKPoint pixels)  // Preview-normalized point -> canvas pixels
+
+// Passkey sign-in codes ("FIDO:/..." QR shown by a site)
+public static bool IsPasskeySignInSupported { get; }  // System can take such a code (currently iOS 16+)
+public static Task<bool> StartPasskeySignInAsync(DetectedCode code)  // Hands the code to the system; call from a tap
 ```
 
 ## Core Methods
@@ -239,6 +243,7 @@ public sealed class DetectedCode
     public string Value { get; }            // Decoded text. Untrusted input: validate before acting on it
     public CameraCodeTypes Type { get; }    // Format of this code, a single flag
     public SKPoint[] Corners { get; }       // Normalized 0..1 in the displayed preview image, winding not guaranteed
+    public bool IsPasskeySignIn { get; }    // Text is "FIDO:/" + digits: a passkey sign-in code
 }
 ```
 

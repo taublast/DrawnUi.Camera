@@ -18,7 +18,7 @@ Use as Camera or a standalone Audio recorder inside any MAUI app by wrapping wit
 - Zoom control with configurable limits
 - Dual-channel flash control (preview torch + capture flash)
 - GPS injection and custom EXIF for both photos and videos
-- QR code and barcode detection in the live preview (iOS)
+- QR code and barcode detection in the live preview, passkey sign-in codes handed to the system (iOS)
 - Built-in permission handling
 
 Read the [blog article](https://taublast.github.io/posts/VideoRecording) about the sample app coming along with this repo.
@@ -28,9 +28,10 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.6.212
+## What's New  1.10.6.213
 
  * Built on DrawnUi 1.10.6.21 (`DrawnUi.Maui` / `DrawnUi.Net`).
+ * iOS: passkey sign-in codes. A site that offers "sign in with a passkey on another device" shows a QR code; `DetectedCode.IsPasskeySignIn` recognizes it, and `SkiaCamera.StartPasskeySignInAsync(code)` hands it to the system, which shows its own passkey sheet and signs the user in. Your app never sees a key. Call it from a tap. `SkiaCamera.IsPasskeySignInSupported` tells whether the system can take the code: iOS 16 and later for now. See the [Usage Guide](docs/usage-guide.md#passkey-sign-in-codes).
  * iOS: the camera finds QR codes and barcodes in the live preview. Set `CodeDetection` (for example `CameraCodeTypes.Qr`) and listen to `CodesDetected`: every code comes with its text and its corners, and `TryMapPreviewPoint` turns a corner into a position on the canvas. The system's capture pipeline does the detection, so your code reads no frame pixels for it and nothing is added to the render thread. Off by default, and off costs nothing. `SkiaCamera.IsCodeDetectionSupported` tells whether the platform can do it: iOS for now. See the [Usage Guide](docs/usage-guide.md#16-code-detection-qr-and-barcodes).
 
 ## Previously 

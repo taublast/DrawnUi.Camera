@@ -7,16 +7,46 @@ partial class SkiaCamera
     /// <summary>
     /// True when this platform can detect codes in the live preview. Currently iOS only.
     /// </summary>
-    public static bool IsCodeDetectionSupported
+    public static bool IsCodeDetectionSupported =>
+        OperatingSystem.IsIOS() && !OperatingSystem.IsMacCatalyst(); // IsIOS is true on Mac Catalyst too
+
+    /// <summary>
+    /// True when this platform can hand a passkey sign-in code (<see cref="DetectedCode.IsPasskeySignIn"/>)
+    /// to the system. Currently iOS 16 and later.
+    /// </summary>
+    public static bool IsPasskeySignInSupported =>
+        OperatingSystem.IsIOSVersionAtLeast(16) && !OperatingSystem.IsMacCatalyst();
+
+    /// <summary>
+    /// Hands a passkey sign-in code to the system, which shows its own passkey sheet and does the whole
+    /// sign-in: the app never sees a key. Call it from a user action (a tap), never by itself on detection.
+    /// Returns false when the code is not a passkey sign-in code, the platform cannot do it
+    /// (<see cref="IsPasskeySignInSupported"/>), or the system refused the link.
+    /// </summary>
+    public static Task<bool> StartPasskeySignInAsync(DetectedCode code)
     {
-        get
-        {
+        if (code == null || !code.IsPasskeySignIn || !IsPasskeySignInSupported)
+            return Task.FromResult(false);
+
 #if IOS
-            return true;
+        return MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            try
+            {
+                // the text exactly as scanned: IsPasskeySignIn checked it is "FIDO:/" + digits
+                using var url = new Foundation.NSUrl(code.Value);
+                return await UIKit.UIApplication.SharedApplication.OpenUrlAsync(url,
+                    new UIKit.UIApplicationOpenUrlOptions());
+            }
+            catch (Exception e)
+            {
+                Super.Log(e);
+                return false;
+            }
+        });
 #else
-            return false;
+        return Task.FromResult(false);
 #endif
-        }
     }
 
     public static readonly BindableProperty CodeDetectionProperty = BindableProperty.Create(

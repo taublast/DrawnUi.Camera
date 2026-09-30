@@ -15,6 +15,7 @@ using Windows.Media.Devices;
 using Windows.Media.MediaProperties;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using WinRT;
 
 namespace DrawnUi.Camera;
 
@@ -34,16 +35,16 @@ struct D3D11_MAPPED_SUBRESOURCE
 interface ID3D11Texture2D : ID3D11Resource
 {
     // ID3D11Resource methods
-    new void GetDevice(out ID3D11Device ppDevice);
+    [PreserveSig] new void GetDevice(out ID3D11Device ppDevice);
     new void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     new void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     new void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
-    new void GetType(out int pResourceDimension);
-    new void SetEvictionPriority(uint EvictionPriority);
-    new uint GetEvictionPriority();
+    [PreserveSig] new void GetType(out int pResourceDimension);
+    [PreserveSig] new void SetEvictionPriority(uint EvictionPriority);
+    [PreserveSig] new uint GetEvictionPriority();
 
     // ID3D11Texture2D methods
-    void GetDesc(out D3D11_TEXTURE2D_DESC pDesc);
+    [PreserveSig] void GetDesc(out D3D11_TEXTURE2D_DESC pDesc);
 }
 
 [ComImport]
@@ -51,13 +52,13 @@ interface ID3D11Texture2D : ID3D11Resource
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface ID3D11Resource : ID3D11DeviceChild
 {
-    new void GetDevice(out ID3D11Device ppDevice);
+    [PreserveSig] new void GetDevice(out ID3D11Device ppDevice);
     new void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     new void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     new void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
-    void GetType(out int pResourceDimension);
-    void SetEvictionPriority(uint EvictionPriority);
-    uint GetEvictionPriority();
+    [PreserveSig] void GetType(out int pResourceDimension);
+    [PreserveSig] void SetEvictionPriority(uint EvictionPriority);
+    [PreserveSig] uint GetEvictionPriority();
 }
 
 [ComImport]
@@ -65,7 +66,7 @@ interface ID3D11Resource : ID3D11DeviceChild
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface ID3D11DeviceChild
 {
-    void GetDevice(out ID3D11Device ppDevice);
+    [PreserveSig] void GetDevice(out ID3D11Device ppDevice);
     void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
@@ -104,18 +105,18 @@ interface ID3D11Device
     void OpenSharedResource(IntPtr hResource, ref Guid ReturnedInterface, out IntPtr ppResource);
     void CheckFormatSupport(uint Format, out uint pFormatSupport);
     void CheckMultisampleQualityLevels(uint Format, uint SampleCount, out uint pNumQualityLevels);
-    void CheckCounterInfo(out IntPtr pCounterInfo);
+    [PreserveSig] void CheckCounterInfo(out IntPtr pCounterInfo);
     void CheckCounter(IntPtr pDesc, out int pType, out int pActiveCounters, out IntPtr szName, out uint pNameLength, out IntPtr szUnits, out uint pUnitsLength, out IntPtr szDescription, out uint pDescriptionLength);
     void CheckFeatureSupport(int Feature, IntPtr pFeatureSupportData, uint FeatureSupportDataSize);
     void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
-    void GetFeatureLevel(out int pFeatureLevel);
-    void GetCreationFlags(out uint pFlags);
+    [PreserveSig] int GetFeatureLevel();
+    [PreserveSig] uint GetCreationFlags();
     void GetDeviceRemovedReason(out int pReason);
-    void GetImmediateContext(out ID3D11DeviceContext ppImmediateContext);
+    [PreserveSig] void GetImmediateContext(out ID3D11DeviceContext ppImmediateContext);
     void SetExceptionMode(uint RaiseFlags);
-    void GetExceptionMode(out uint pRaiseFlags);
+    [PreserveSig] uint GetExceptionMode();
 }
 
 [ComImport]
@@ -124,55 +125,55 @@ interface ID3D11Device
 interface ID3D11DeviceContext : ID3D11DeviceChild
 {
     // ID3D11DeviceChild methods
-    new void GetDevice(out ID3D11Device ppDevice);
+    [PreserveSig] new void GetDevice(out ID3D11Device ppDevice);
     new void GetPrivateData(ref Guid guid, ref uint pDataSize, IntPtr pData);
     new void SetPrivateData(ref Guid guid, uint DataSize, IntPtr pData);
     new void SetPrivateDataInterface(ref Guid guid, [MarshalAs(UnmanagedType.IUnknown)] object pData);
 
     // ID3D11DeviceContext methods
-    void VSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
-    void PSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
-    void PSSetShader(IntPtr pPixelShader, IntPtr ppClassInstances, uint NumClassInstances);
-    void PSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
-    void VSSetShader(IntPtr pVertexShader, IntPtr ppClassInstances, uint NumClassInstances);
-    void DrawIndexed(uint IndexCount, uint StartIndexLocation, int BaseVertexLocation);
-    void Draw(uint VertexCount, uint StartVertexLocation);
+    [PreserveSig] void VSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
+    [PreserveSig] void PSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
+    [PreserveSig] void PSSetShader(IntPtr pPixelShader, IntPtr ppClassInstances, uint NumClassInstances);
+    [PreserveSig] void PSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
+    [PreserveSig] void VSSetShader(IntPtr pVertexShader, IntPtr ppClassInstances, uint NumClassInstances);
+    [PreserveSig] void DrawIndexed(uint IndexCount, uint StartIndexLocation, int BaseVertexLocation);
+    [PreserveSig] void Draw(uint VertexCount, uint StartVertexLocation);
     void Map(ID3D11Resource pResource, uint Subresource, uint MapType, uint MapFlags, out D3D11_MAPPED_SUBRESOURCE pMappedResource);
-    void Unmap(ID3D11Resource pResource, uint Subresource);
-    void PSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
-    void IASetInputLayout(IntPtr pInputLayout);
-    void IASetVertexBuffers(uint StartSlot, uint NumBuffers, IntPtr ppVertexBuffers, IntPtr pStrides, IntPtr pOffsets);
-    void IASetIndexBuffer(IntPtr pIndexBuffer, uint Format, uint Offset);
-    void DrawIndexedInstanced(uint IndexCountPerInstance, uint InstanceCount, uint StartIndexLocation, int BaseVertexLocation, uint StartInstanceLocation);
-    void DrawInstanced(uint VertexCountPerInstance, uint InstanceCount, uint StartVertexLocation, uint StartInstanceLocation);
-    void GSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
-    void GSSetShader(IntPtr pShader, IntPtr ppClassInstances, uint NumClassInstances);
-    void IASetPrimitiveTopology(uint Topology);
-    void VSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
-    void VSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
-    void Begin(IntPtr pAsync);
-    void End(IntPtr pAsync);
+    [PreserveSig] void Unmap(ID3D11Resource pResource, uint Subresource);
+    [PreserveSig] void PSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
+    [PreserveSig] void IASetInputLayout(IntPtr pInputLayout);
+    [PreserveSig] void IASetVertexBuffers(uint StartSlot, uint NumBuffers, IntPtr ppVertexBuffers, IntPtr pStrides, IntPtr pOffsets);
+    [PreserveSig] void IASetIndexBuffer(IntPtr pIndexBuffer, uint Format, uint Offset);
+    [PreserveSig] void DrawIndexedInstanced(uint IndexCountPerInstance, uint InstanceCount, uint StartIndexLocation, int BaseVertexLocation, uint StartInstanceLocation);
+    [PreserveSig] void DrawInstanced(uint VertexCountPerInstance, uint InstanceCount, uint StartVertexLocation, uint StartInstanceLocation);
+    [PreserveSig] void GSSetConstantBuffers(uint StartSlot, uint NumBuffers, IntPtr ppConstantBuffers);
+    [PreserveSig] void GSSetShader(IntPtr pShader, IntPtr ppClassInstances, uint NumClassInstances);
+    [PreserveSig] void IASetPrimitiveTopology(uint Topology);
+    [PreserveSig] void VSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
+    [PreserveSig] void VSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
+    [PreserveSig] void Begin(IntPtr pAsync);
+    [PreserveSig] void End(IntPtr pAsync);
     void GetData(IntPtr pAsync, IntPtr pData, uint DataSize, uint GetDataFlags);
-    void SetPredication(IntPtr pPredicate, int PredicateValue);
-    void GSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
-    void GSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
-    void OMSetRenderTargets(uint NumViews, IntPtr ppRenderTargetViews, IntPtr pDepthStencilView);
-    void OMSetRenderTargetsAndUnorderedAccessViews(uint NumRTVs, IntPtr ppRenderTargetViews, IntPtr pDepthStencilView, uint UAVStartSlot, uint NumUAVs, IntPtr ppUnorderedAccessViews, IntPtr pUAVInitialCounts);
-    void OMSetBlendState(IntPtr pBlendState, float[] BlendFactor, uint SampleMask);
-    void OMSetDepthStencilState(IntPtr pDepthStencilState, uint StencilRef);
-    void SOSetTargets(uint NumBuffers, IntPtr ppSOTargets, IntPtr pOffsets);
-    void DrawAuto();
-    void DrawIndexedInstancedIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
-    void DrawInstancedIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
-    void Dispatch(uint ThreadGroupCountX, uint ThreadGroupCountY, uint ThreadGroupCountZ);
-    void DispatchIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
-    void RSSetState(IntPtr pRasterizerState);
-    void RSSetViewports(uint NumViewports, IntPtr pViewports);
-    void RSSetScissorRects(uint NumRects, IntPtr pRects);
-    void CopySubresourceRegion(ID3D11Resource pDstResource, uint DstSubresource, uint DstX, uint DstY, uint DstZ, ID3D11Resource pSrcResource, uint SrcSubresource, IntPtr pSrcBox);
-    void CopyResource(ID3D11Resource pDstResource, ID3D11Resource pSrcResource);
+    [PreserveSig] void SetPredication(IntPtr pPredicate, int PredicateValue);
+    [PreserveSig] void GSSetShaderResources(uint StartSlot, uint NumViews, IntPtr ppShaderResourceViews);
+    [PreserveSig] void GSSetSamplers(uint StartSlot, uint NumSamplers, IntPtr ppSamplers);
+    [PreserveSig] void OMSetRenderTargets(uint NumViews, IntPtr ppRenderTargetViews, IntPtr pDepthStencilView);
+    [PreserveSig] void OMSetRenderTargetsAndUnorderedAccessViews(uint NumRTVs, IntPtr ppRenderTargetViews, IntPtr pDepthStencilView, uint UAVStartSlot, uint NumUAVs, IntPtr ppUnorderedAccessViews, IntPtr pUAVInitialCounts);
+    [PreserveSig] void OMSetBlendState(IntPtr pBlendState, float[] BlendFactor, uint SampleMask);
+    [PreserveSig] void OMSetDepthStencilState(IntPtr pDepthStencilState, uint StencilRef);
+    [PreserveSig] void SOSetTargets(uint NumBuffers, IntPtr ppSOTargets, IntPtr pOffsets);
+    [PreserveSig] void DrawAuto();
+    [PreserveSig] void DrawIndexedInstancedIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
+    [PreserveSig] void DrawInstancedIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
+    [PreserveSig] void Dispatch(uint ThreadGroupCountX, uint ThreadGroupCountY, uint ThreadGroupCountZ);
+    [PreserveSig] void DispatchIndirect(IntPtr pBufferForArgs, uint AlignedByteOffsetForArgs);
+    [PreserveSig] void RSSetState(IntPtr pRasterizerState);
+    [PreserveSig] void RSSetViewports(uint NumViewports, IntPtr pViewports);
+    [PreserveSig] void RSSetScissorRects(uint NumRects, IntPtr pRects);
+    [PreserveSig] void CopySubresourceRegion(ID3D11Resource pDstResource, uint DstSubresource, uint DstX, uint DstY, uint DstZ, ID3D11Resource pSrcResource, uint SrcSubresource, IntPtr pSrcBox);
+    [PreserveSig] void CopyResource(ID3D11Resource pDstResource, ID3D11Resource pSrcResource);
     // Truncated for brevity, but needed
-    void UpdateSubresource(ID3D11Resource pDstResource, uint DstSubresource, IntPtr pDstBox, IntPtr pSrcData, uint SrcRowPitch, uint SrcDepthPitch);
+    [PreserveSig] void UpdateSubresource(ID3D11Resource pDstResource, uint DstSubresource, IntPtr pDstBox, IntPtr pSrcData, uint SrcRowPitch, uint SrcDepthPitch);
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -197,7 +198,7 @@ enum D3D11_CPU_ACCESS_FLAG : uint { WRITE = 65536, READ = 131072 }
 enum D3D11_MAP : uint { READ = 1, WRITE = 2, READ_WRITE = 3, WRITE_DISCARD = 4, WRITE_NO_OVERWRITE = 5 }
 
 [ComImport]
-[Guid("035f3ab4-482e-4e50-b960-13b05d3696c9")]
+[Guid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IDirect3DDxgiInterfaceAccess
 {
@@ -275,6 +276,329 @@ struct DXGI_MAPPED_RECT
 unsafe interface IMemoryBufferByteAccess
 {
     void GetBuffer(out byte* buffer, out uint capacity);
+}
+
+/// <summary>
+/// Reads the pixels of a video frame's SoftwareBitmap through the raw COM vtables, so that no projected
+/// <see cref="SoftwareBitmap"/> or <see cref="BitmapBuffer"/> object is created for the frame. CsWinRT marks
+/// those classes as large: their constructors call <c>GC.AddMemoryPressure(1 200 000)</c> each, and at camera frame
+/// rate that pressure made the GC run induced full collections about twenty times a second, pausing every thread
+/// of the app. The returned image wraps the locked buffer and unlocks and releases it when it is disposed.
+/// </summary>
+public static unsafe class SoftwareBitmapPixels
+{
+    static readonly Guid IidVideoMediaFrame = new("00DD4CCB-32BD-4FE1-A013-7CC13CF5DBCF");
+    static readonly Guid IidSoftwareBitmap = new("689E0708-7EEF-483F-963F-DA938818E073");
+    static readonly Guid IidMemoryBuffer = new("FBC4DD2A-245B-11E4-AF98-689423260CF8");
+    static readonly Guid IidMemoryBufferByteAccess = new("5B0D3235-4DBA-4D44-865E-8F1D0E4FD04D");
+    static readonly Guid IidClosable = new("30D5A829-7FA4-4026-83BB-D75BAE4EA99E");
+
+    // vtable slots (6 IInspectable entries first), the same numbers the CsWinRT projection calls
+    const int SlotGetSoftwareBitmap = 8;                                                             // IVideoMediaFrame
+    const int SlotPixelFormat = 6, SlotAlphaMode = 7, SlotPixelWidth = 8, SlotPixelHeight = 9, SlotLockBuffer = 15; // ISoftwareBitmap
+    const int SlotGetPlaneDescription = 7;                                                           // IBitmapBuffer
+    const int SlotCreateReference = 6;                                                               // IMemoryBuffer
+    const int SlotGetBuffer = 3;                                                                     // IMemoryBufferByteAccess (IUnknown)
+    const int SlotClose = 6;                                                                         // IClosable
+
+    static bool _loggedFailure;
+
+    /// <summary>Frames served from the raw path since start (diagnostics).</summary>
+    public static long Wrapped;
+    /// <summary>Frames that fell back to the projected bitmap since start (diagnostics).</summary>
+    public static long Fallbacks;
+    /// <summary>Where the last fallback happened (diagnostics).</summary>
+    public static string LastFailure = "";
+    /// <summary>Direct3D frames converted through the staging texture (diagnostics).</summary>
+    public static long D3DOptimized;
+    /// <summary>Direct3D frames that fell back to a SoftwareBitmap copy (diagnostics).</summary>
+    public static long D3DFallbacks;
+    /// <summary>Message of the last staging-texture conversion failure (diagnostics).</summary>
+    public static string LastD3DError = "";
+
+    static SKImage Fail(string stage)
+    {
+        Fallbacks++;
+        LastFailure = stage;
+        return null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct PlaneDescription
+    {
+        public int StartIndex, Width, Height, Stride;
+    }
+
+    /// <summary>The COM references an image keeps alive; released once, from the image's release callback.</summary>
+    sealed class Lease
+    {
+        public IntPtr Bitmap, Buffer, MemoryBuffer, Reference, Access;
+        int _released;
+
+        public void Release()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0)
+                return;
+            Close(Reference); // IMemoryBufferReference
+            Close(Buffer);    // BitmapBuffer: closing it unlocks the bitmap
+            ReleaseRef(ref Access);
+            ReleaseRef(ref Reference);
+            ReleaseRef(ref MemoryBuffer);
+            ReleaseRef(ref Buffer);
+            ReleaseRef(ref Bitmap);
+        }
+    }
+
+    /// <summary>
+    /// The frame's bitmap as a BGRA premultiplied image over the locked native buffer, or null when there is no
+    /// software bitmap, the format is not BGRA8 premultiplied, or any call fails (the caller then takes the
+    /// projected path).
+    /// </summary>
+    public static SKImage Wrap(VideoMediaFrame videoFrame)
+    {
+        if (videoFrame is not IWinRTObject winrt)
+            return Fail("not-winrt");
+        var frame = QueryInterface(winrt.NativeObject.ThisPtr, IidVideoMediaFrame);
+        if (frame == IntPtr.Zero)
+            return Fail("qi-videoframe");
+
+        var lease = new Lease();
+        try
+        {
+            IntPtr bitmapUnknown;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(frame, SlotGetSoftwareBitmap))(frame, &bitmapUnknown) != 0
+                || bitmapUnknown == IntPtr.Zero)
+                return Fail("get-bitmap");
+            lease.Bitmap = QueryInterface(bitmapUnknown, IidSoftwareBitmap);
+            Marshal.Release(bitmapUnknown);
+            if (lease.Bitmap == IntPtr.Zero)
+                return Fail("qi-bitmap");
+
+            int format, alpha, width, height;
+            if (GetInt(lease.Bitmap, SlotPixelFormat, &format) != 0 || GetInt(lease.Bitmap, SlotAlphaMode, &alpha) != 0
+                || GetInt(lease.Bitmap, SlotPixelWidth, &width) != 0 || GetInt(lease.Bitmap, SlotPixelHeight, &height) != 0)
+                return Fail("get-props");
+            if (format != (int)BitmapPixelFormat.Bgra8 || alpha != (int)BitmapAlphaMode.Premultiplied || width <= 0 || height <= 0)
+                return Fail("format");
+
+            IntPtr buffer;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, int, IntPtr*, int>)Slot(lease.Bitmap, SlotLockBuffer))(lease.Bitmap, (int)BitmapBufferAccessMode.Read, &buffer) != 0
+                || buffer == IntPtr.Zero)
+                return Fail("lock");
+            lease.Buffer = buffer;
+
+            PlaneDescription plane;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, int, PlaneDescription*, int>)Slot(buffer, SlotGetPlaneDescription))(buffer, 0, &plane) != 0)
+                return Fail("plane");
+
+            lease.MemoryBuffer = QueryInterface(buffer, IidMemoryBuffer);
+            if (lease.MemoryBuffer == IntPtr.Zero)
+                return Fail("qi-membuf");
+            IntPtr reference;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(lease.MemoryBuffer, SlotCreateReference))(lease.MemoryBuffer, &reference) != 0
+                || reference == IntPtr.Zero)
+                return Fail("reference");
+            lease.Reference = reference;
+
+            lease.Access = QueryInterface(reference, IidMemoryBufferByteAccess);
+            if (lease.Access == IntPtr.Zero)
+                return Fail("qi-access");
+            byte* data;
+            uint capacity;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, byte**, uint*, int>)Slot(lease.Access, SlotGetBuffer))(lease.Access, &data, &capacity) != 0
+                || data == null)
+                return Fail("getbuffer");
+            if (plane.Stride < width * 4 || plane.StartIndex + (long)plane.Stride * (height - 1) + width * 4L > capacity)
+                return Fail("bounds");
+
+            var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var pixmap = new SKPixmap(info, (IntPtr)(data + plane.StartIndex), plane.Stride);
+            var image = SKImage.FromPixels(pixmap, static (address, context) => ((Lease)context).Release(), lease);
+            if (image == null)
+                return Fail("fromPixels");
+            lease = null; // owned by the image from here on
+            Wrapped++;
+            return image;
+        }
+        catch (Exception e)
+        {
+            if (!_loggedFailure)
+            {
+                _loggedFailure = true;
+                Debug.WriteLine($"[NativeCameraWindows] SoftwareBitmapPixels failed, using the projected bitmap: {e}");
+            }
+            return Fail("exception");
+        }
+        finally
+        {
+            lease?.Release();
+            Marshal.Release(frame);
+        }
+    }
+
+    static readonly Guid IidDxgiInterfaceAccess = new("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1"); // windows.graphics.directx.direct3d11.interop.h
+
+    /// <summary>
+    /// <c>IDirect3DDxgiInterfaceAccess::GetInterface</c> on a projected Direct3D surface: the DXGI/D3D11 object
+    /// (<paramref name="iid"/>, e.g. ID3D11Texture2D) behind it, with one reference the caller releases, or zero.
+    /// A CsWinRT object cannot be cast to a [ComImport] interface, so the access interface is queried on the raw pointer.
+    /// </summary>
+    public static IntPtr GetDxgiInterface(object surface, Guid iid)
+    {
+        if (surface is not IWinRTObject winrt)
+        {
+            LastD3DError = $"surface is {surface?.GetType().FullName ?? "null"}, not IWinRTObject";
+            return IntPtr.Zero;
+        }
+        return GetDxgiInterface(winrt.NativeObject.ThisPtr, iid);
+    }
+
+    /// <summary>
+    /// <see cref="GetDxgiInterface(object, Guid)"/> on a raw IDirect3DSurface pointer.
+    /// </summary>
+    internal static IntPtr GetDxgiInterface(IntPtr surface, Guid iid)
+    {
+        var g = IidDxgiInterfaceAccess;
+        var qi = Marshal.QueryInterface(surface, ref g, out var access);
+        if (qi != 0 || access == IntPtr.Zero)
+        {
+            LastD3DError = $"QI IDirect3DDxgiInterfaceAccess hr=0x{qi:X8}";
+            return IntPtr.Zero;
+        }
+        try
+        {
+            IntPtr result;
+            var hr = ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, int>)Slot(access, 3))(access, &iid, &result);
+            if (hr != 0)
+                LastD3DError = $"GetInterface({iid}) hr=0x{hr:X8}";
+            return hr == 0 ? result : IntPtr.Zero;
+        }
+        finally
+        {
+            Marshal.Release(access);
+        }
+    }
+
+    static readonly Guid IidDxgiSurface2 = new("ABA496DD-B617-4CB8-A866-BC44D7EB1FA2"); // dxgi1_2.h
+    const int SlotGetResource = 13; // IDXGISurface2: IUnknown 3, IDXGIObject 4, IDXGIDeviceSubObject 1, IDXGISurface 3, IDXGISurface1 2
+
+    /// <summary>
+    /// The ID3D11Texture2D behind a projected Direct3D surface and the subresource the surface stands for
+    /// (Media Foundation may hand out one slice of a texture array), via <c>IDXGISurface2::GetResource</c>.
+    /// Falls back to the texture itself with subresource 0. The caller releases the returned reference.
+    /// </summary>
+    internal static IntPtr GetDxgiTexture(object surface, Guid textureIid, out uint subresource)
+    {
+        subresource = 0;
+        if (surface is not IWinRTObject winrt)
+        {
+            LastD3DError = $"surface is {surface?.GetType().FullName ?? "null"}, not IWinRTObject";
+            return IntPtr.Zero;
+        }
+        return GetDxgiTexture(winrt.NativeObject.ThisPtr, textureIid, out subresource);
+    }
+
+    /// <summary>
+    /// <see cref="GetDxgiTexture(object, Guid, out uint)"/> on a raw IDirect3DSurface pointer.
+    /// </summary>
+    internal static IntPtr GetDxgiTexture(IntPtr surface, Guid textureIid, out uint subresource)
+    {
+        subresource = 0;
+        var surface2 = GetDxgiInterface(surface, IidDxgiSurface2);
+        if (surface2 != IntPtr.Zero)
+        {
+            try
+            {
+                IntPtr parent;
+                uint index;
+                var hr = ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, uint*, int>)Slot(surface2, SlotGetResource))(surface2, &textureIid, &parent, &index);
+                if (hr == 0 && parent != IntPtr.Zero)
+                {
+                    subresource = index;
+                    return parent;
+                }
+            }
+            finally
+            {
+                Marshal.Release(surface2);
+            }
+        }
+        return GetDxgiInterface(surface, textureIid);
+    }
+
+    static readonly Guid IidMediaFrameReader = new("E4C94395-2028-48ED-90B0-D1C1B162E24C");
+    const int SlotTryAcquireLatestFrame = 8; // IMediaFrameReader
+    const int SlotGetVideoMediaFrame = 12;   // IMediaFrameReference
+    const int SlotGetDirect3DSurface = 9;    // IVideoMediaFrame
+
+    /// <summary>
+    /// The newest frame of a frame reader and its Direct3D surface, through raw COM
+    /// (TryAcquireLatestFrame, VideoMediaFrame, Direct3DSurface): unlike the projected calls, no object is created, cast
+    /// by reflection or left to the finalizer per frame. Returns the frame reference, zero when there is no frame;
+    /// <paramref name="surface"/> is zero when the frame has none. Both go to <see cref="CloseFrame"/>.
+    /// </summary>
+    internal static IntPtr AcquireLatestSurface(object reader, out IntPtr surface)
+    {
+        surface = IntPtr.Zero;
+        if (reader is not IWinRTObject winrt)
+            return IntPtr.Zero;
+        var frameReader = QueryInterface(winrt.NativeObject.ThisPtr, IidMediaFrameReader);
+        if (frameReader == IntPtr.Zero)
+            return IntPtr.Zero;
+        IntPtr frame;
+        var hr = ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(frameReader, SlotTryAcquireLatestFrame))(frameReader, &frame);
+        Marshal.Release(frameReader);
+        if (hr != 0 || frame == IntPtr.Zero)
+            return IntPtr.Zero;
+        IntPtr video;
+        if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(frame, SlotGetVideoMediaFrame))(frame, &video) == 0 && video != IntPtr.Zero)
+        {
+            IntPtr d3d;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(video, SlotGetDirect3DSurface))(video, &d3d) == 0)
+                surface = d3d;
+            Marshal.Release(video);
+        }
+        return frame;
+    }
+
+    /// <summary>
+    /// Closes and releases what <see cref="AcquireLatestSurface"/> returned, so the frame's buffer goes back to Media
+    /// Foundation now.
+    /// </summary>
+    internal static void CloseFrame(IntPtr frame, IntPtr surface)
+    {
+        Close(surface);
+        ReleaseRef(ref surface);
+        Close(frame);
+        ReleaseRef(ref frame);
+    }
+
+    static void* Slot(IntPtr obj, int index) => (*(void***)obj)[index];
+
+    static int GetInt(IntPtr obj, int slot, int* value)
+        => ((delegate* unmanaged[Stdcall]<IntPtr, int*, int>)Slot(obj, slot))(obj, value);
+
+    static IntPtr QueryInterface(IntPtr obj, Guid iid)
+        => Marshal.QueryInterface(obj, ref iid, out var result) == 0 ? result : IntPtr.Zero;
+
+    static void Close(IntPtr obj)
+    {
+        if (obj == IntPtr.Zero)
+            return;
+        var closable = QueryInterface(obj, IidClosable);
+        if (closable == IntPtr.Zero)
+            return;
+        ((delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(closable, SlotClose))(closable);
+        Marshal.Release(closable);
+    }
+
+    static void ReleaseRef(ref IntPtr obj)
+    {
+        if (obj == IntPtr.Zero)
+            return;
+        Marshal.Release(obj);
+        obj = IntPtr.Zero;
+    }
 }
 
 #endregion
@@ -449,24 +773,47 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
     #region Setup
 
-    private async void Setup()
+    /// <summary>
+    /// Hands the capture device back to Windows: the frame reader and MediaCapture are what hold it, and while
+    /// they live the camera counts as in use (privacy indicator, camera light, other apps refused), however
+    /// long ago the frames stopped. Called when the camera is switched off for real and before setting up
+    /// again, so a second MediaCapture never piles on top of the first one.
+    /// </summary>
+    private void ReleaseHardware()
     {
+        if (_frameReader == null && _mediaCapture == null)
+            return;
+
         try
         {
-            //Debug.WriteLine("[NativeCameraWindows] Starting setup...");
-            await SetupHardware();
-            //Debug.WriteLine("[NativeCameraWindows] Hardware setup completed successfully");
-            //State = CameraProcessorState.Enabled;
+            if (_frameReader != null)
+            {
+                _frameReader.FrameArrived -= OnFrameArrived;
+                _frameReader.Dispose();
+                _frameReader = null;
+            }
+
+            _frameSource = null;
+            _mediaCapture?.Dispose();
+            _mediaCapture = null;
+            ReleaseGpuCapture();
+            Debug.WriteLine("[NativeCameraWindows] Capture device released");
         }
         catch (Exception e)
         {
-            Debug.WriteLine($"[NativeCameraWindows] Setup error: {e}");
-            State = CameraProcessorState.Error;
+            Debug.WriteLine($"[NativeCameraWindows] ReleaseHardware error: {e}");
+            _frameReader = null;
+            _frameSource = null;
+            _mediaCapture = null;
         }
     }
 
     private async Task SetupHardware()
     {
+        // whatever was open before goes first: MediaCapture holds the device, so building a second one over it
+        // leaks the camera for the life of the process
+        ReleaseHardware();
+
         //Debug.WriteLine("[NativeCameraWindows] Finding camera devices...");
 
         var devices = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture);
@@ -562,36 +909,59 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
         }
 
-        var settings = new MediaCaptureInitializationSettings
+        MediaCaptureInitializationSettings NewSettings()
         {
-            VideoDeviceId = _cameraDevice.Id,
-            StreamingCaptureMode = captureMode,
-            PhotoCaptureSource = PhotoCaptureSource.VideoPreview
-        };
+            var created = new MediaCaptureInitializationSettings
+            {
+                VideoDeviceId = _cameraDevice.Id,
+                StreamingCaptureMode = captureMode,
+                PhotoCaptureSource = PhotoCaptureSource.VideoPreview
+            };
 
-        if (!string.IsNullOrEmpty(preferredAudioDeviceId))
+            if (!string.IsNullOrEmpty(preferredAudioDeviceId))
+            {
+                created.AudioDeviceId = preferredAudioDeviceId;
+            }
+            return created;
+        }
+
+        async Task InitializeCaptureAsync(MediaCaptureInitializationSettings settings)
         {
-            settings.AudioDeviceId = preferredAudioDeviceId;
+            try
+            {
+                await _mediaCapture.InitializeAsync(settings);
+            }
+            catch (Exception ex)
+            {
+                if (captureMode == StreamingCaptureMode.AudioAndVideo)
+                {
+                    Debug.WriteLine($"[NativeCameraWindows] Failed to initialize with Audio: {ex.Message}. Retrying Video only...");
+                    settings.StreamingCaptureMode = StreamingCaptureMode.Video;
+                    await _mediaCapture.InitializeAsync(settings);
+                }
+                else
+                {
+                    throw;
+                }
+            }
         }
 
         Debug.WriteLine($"[NativeCameraWindows] *** INITIALIZING MEDIACAPTURE WITH VideoDeviceId: {_cameraDevice.Id} ({_cameraDevice.Name}) ***");
 
+        // GPU preview: our own device on the UI's adapter is handed to Media Foundation (first choice)
+        var initSettings = NewSettings();
+        var onOurDevice = await PrepareGpuCaptureAsync(initSettings);
         try
         {
-            await _mediaCapture.InitializeAsync(settings);
+            await InitializeCaptureAsync(initSettings);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (onOurDevice)
         {
-            if (captureMode == StreamingCaptureMode.AudioAndVideo)
-            {
-                Debug.WriteLine($"[NativeCameraWindows] Failed to initialize with Audio: {ex.Message}. Retrying Video only...");
-                settings.StreamingCaptureMode = StreamingCaptureMode.Video;
-                await _mediaCapture.InitializeAsync(settings);
-            }
-            else
-            {
-                throw;
-            }
+            // second choice: Media Foundation's own device; whether it shares the UI's adapter is checked on the frames
+            NoteGpuCaptureFallback($"Media Foundation refused our capture device ({ex.Message}); using its own device");
+            _mediaCapture.Dispose();
+            _mediaCapture = new MediaCapture();
+            await InitializeCaptureAsync(NewSettings());
         }
 
         Debug.WriteLine("[NativeCameraWindows] MediaCapture initialized successfully");
@@ -862,7 +1232,16 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             Debug.WriteLine("[NativeCameraWindows] No suitable format found, using default");
         }
 
-        _frameReader = await _mediaCapture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8);
+        // GPU preview: frames as the camera delivers them (NV12 / YUY2, MJPG decoded by the frame server), converted on the
+        // GPU; otherwise Windows converts to BGRA and the frame is read back
+        // A compressed format (MJPG) takes the same reader on the raster path: the Bgra8 conversion cannot decode it (the
+        // reader then fails to start), so the video processor converts the decoded frames before the readback.
+        _rasterNative = !_gpuCapture && IsCompressedSubtype(_frameSource.CurrentFormat?.Subtype);
+        _frameReader = _gpuCapture || _rasterNative
+            ? await _mediaCapture.CreateFrameReaderAsync(_frameSource)
+            : await _mediaCapture.CreateFrameReaderAsync(_frameSource, MediaEncodingSubtypes.Bgra8);
+        if (_gpuCapture || _rasterNative)
+            ReadFrameColour(_frameSource.CurrentFormat);
         _frameReader.FrameArrived += OnFrameArrived;
         Debug.WriteLine("[NativeCameraWindows] Frame reader created and event handler attached");
     }
@@ -969,22 +1348,37 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         ID3D11Texture2D texture = null;
         ID3D11Device device = null;
         ID3D11DeviceContext context = null;
+        var stage = "start";
 
         try
         {
-            // Get DXGI Interface Access
-            var access = d3dSurface as IDirect3DDxgiInterfaceAccess;
-            if (access == null) return null;
+            // The surface is a CsWinRT object: it cannot be cast to a [ComImport] interface (that cast always
+            // failed, and every frame silently took the SoftwareBitmap copy below), so the DXGI access
+            // interface is queried on the raw pointer instead.
+            stage = "get-interface";
+            var texturePtr = SoftwareBitmapPixels.GetDxgiTexture(d3dSurface, typeof(ID3D11Texture2D).GUID, out var subresource);
+            if (texturePtr == IntPtr.Zero)
+            {
+                SoftwareBitmapPixels.LastD3DError = "no ID3D11Texture2D: " + SoftwareBitmapPixels.LastD3DError;
+                return null;
+            }
 
-            var textureGuid = typeof(ID3D11Texture2D).GUID;
-            var texturePtr = access.GetInterface(ref textureGuid);
-            if (texturePtr == IntPtr.Zero) return null;
-
+            stage = "wrapper";
             texture = Marshal.GetObjectForIUnknown(texturePtr) as ID3D11Texture2D;
-            if (texture == null) return null;
+            Marshal.Release(texturePtr); // the wrapper holds its own reference
+            if (texture == null)
+            {
+                SoftwareBitmapPixels.LastD3DError = "ID3D11Texture2D wrapper";
+                return null;
+            }
 
+            stage = "desc";
             texture.GetDesc(out D3D11_TEXTURE2D_DESC desc);
+            stage = "gpu-recording";
+            FeedGpuRecording(texturePtr, subresource, desc.Width, desc.Height, desc.Format); // the wrapper keeps texturePtr alive
+            stage = "device";
             texture.GetDevice(out device);
+            stage = "context";
             device.GetImmediateContext(out context);
 
             D3D11_MAPPED_SUBRESOURCE mapped;
@@ -997,48 +1391,60 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
 
             ID3D11Resource resourceToMap = null;
+            uint subresourceToMap = subresource;
 
             if (useStaging)
             {
-                var stagingTexture = GetOrCreateReadbackTexture(device, desc);
+                // the frame is one subresource of the texture (a slice when it is an array): stage only that one
+                var sliceDesc = desc;
+                sliceDesc.ArraySize = 1;
+                sliceDesc.MipLevels = 1;
+
+                stage = "staging";
+                var stagingTexture = GetOrCreateReadbackTexture(device, sliceDesc);
 
                 try
                 {
-                    context.CopyResource((ID3D11Resource)stagingTexture, (ID3D11Resource)texture);
+                    stage = "copy";
+                    context.CopySubresourceRegion((ID3D11Resource)stagingTexture, 0, 0, 0, 0, (ID3D11Resource)texture, subresource, IntPtr.Zero);
                 }
                 catch
                 {
                     ReleaseCachedReadbackTexture();
-                    stagingTexture = GetOrCreateReadbackTexture(device, desc);
-                    context.CopyResource((ID3D11Resource)stagingTexture, (ID3D11Resource)texture);
+                    stagingTexture = GetOrCreateReadbackTexture(device, sliceDesc);
+                    context.CopySubresourceRegion((ID3D11Resource)stagingTexture, 0, 0, 0, 0, (ID3D11Resource)texture, subresource, IntPtr.Zero);
                 }
 
                 resourceToMap = (ID3D11Resource)stagingTexture;
+                subresourceToMap = 0;
             }
             else
             {
                 resourceToMap = (ID3D11Resource)texture;
             }
 
-            context.Map(resourceToMap, 0, (uint)D3D11_MAP.READ, 0, out mapped);
+            stage = "map";
+            context.Map(resourceToMap, subresourceToMap, (uint)D3D11_MAP.READ, 0, out mapped);
 
             try
             {
-                // Create SKImage from mapped memory
-                // We use SKImage.FromPixels which copies the data unless we use a ReleaseProc, but we need to Unmap immediately so copy is safer/easier.
-                // This is still faster than SoftwareBitmap intermediate.
+                // One copy out of the mapped staging memory: the mapping ends right after (the staging texture is
+                // reused for the next frame), so the image must own its pixels. FromPixels would only wrap the
+                // pointer and read unmapped memory later.
                 var info = new SKImageInfo((int)desc.Width, (int)desc.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
-                var skImage = SKImage.FromPixels(info, mapped.pData, (int)mapped.RowPitch);
+                stage = $"image {desc.Width}x{desc.Height} fmt={desc.Format} pitch={mapped.RowPitch}";
+                var skImage = SKImage.FromPixelCopy(info, mapped.pData, (int)mapped.RowPitch);
                 return skImage;
             }
             finally
             {
-                context.Unmap(resourceToMap, 0);
+                context.Unmap(resourceToMap, subresourceToMap);
             }
         }
         catch (Exception e)
         {
             ReleaseCachedReadbackTexture();
+            SoftwareBitmapPixels.LastD3DError = $"{stage}: {e.GetType().Name} {e.Message} hr=0x{e.HResult:X8}";
             Debug.WriteLine($"[NativeCameraWindows] ConvertDirect3DToOptimizedSKImage error: {e}");
             return null;
         }
@@ -1055,69 +1461,6 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     #endregion
 
     #region Improved Frame Processing
-
-    /// <summary>
-    /// Process Direct3D frame using GPU-assisted conversion to SoftwareBitmap
-    /// This leverages GPU-resident data for better performance than pure software processing
-    /// Will set _preview.
-    /// </summary>
-    private async void ProcessDirect3DFrameAsync(Windows.Graphics.DirectX.Direct3D11.IDirect3DSurface d3dSurface)
-    {
-        if (!await _frameSemaphore.WaitAsync(1)) // Skip if busy processing
-        {
-            FormsControl?.OnWindowsRecordingSourceDrop();
-            return;
-        }
-
-        _isProcessingFrame = true;
-        CapturedImage capturedImage = null;
-        try
-        {
-            // PRIORITY 1: Try highly optimized Staging Texture Map (1 copy)
-            // This bypasses the SoftwareBitmap wrapper overhead and double buffering
-            var skImage = ConvertDirect3DToOptimizedSKImage(d3dSurface);
-
-            if (skImage == null)
-            {
-                // PRIORITY 2: Fallback to SoftwareBitmap (2 copies)
-                // GPU Copy (Surface->SoftBitmap) -> CPU Copy (SoftBitmap->Skia)
-                var softwareBitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(d3dSurface);
-                if (softwareBitmap != null)
-                {
-                    skImage = await ConvertToSKImageDirectAsync(softwareBitmap);
-                    softwareBitmap.Dispose();
-                }
-            }
-
-            if (skImage != null)
-            {
-                var meta = FormsControl.CameraDevice.Meta;
-                var rotation = FormsControl.DeviceRotation;
-                Metadata.ApplyRotation(meta, rotation);
-
-                capturedImage = new CapturedImage()
-                {
-                    DeviceRotation = FormsControl.DeviceRotation,
-                    Facing = FormsControl.CameraDevice?.Position ?? FormsControl.Facing,
-                    Time = DateTime.UtcNow,
-                    Image = skImage, // Transfer ownership to CapturedImage - renderer will dispose
-                    Meta = meta,
-                    Rotation = rotation
-                };
-            }
-        }
-        catch (Exception e)
-        {
-            Debug.WriteLine($"[NativeCameraWindows] ProcessDirect3DFrameAsync error: {e}");
-        }
-        finally
-        {
-            _isProcessingFrame = false;
-            _frameSemaphore?.Release();
-        }
-
-        DeliverCapturedFrame(capturedImage);
-    }
 
     /// <summary>
     /// Improved frame arrival handler with GPU acceleration priority
@@ -1159,30 +1502,23 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
         try
         {
+            if (_gpuCapture)
+            {
+                // converted on the GPU into the preview ring, synchronously; the frame is taken through raw COM
+                ProcessGpuFrame(sender);
+                withError = null;
+                return;
+            }
+
             using var frame = sender.TryAcquireLatestFrame();
             if (frame?.VideoMediaFrame != null)
             {
                 var videoFrame = frame.VideoMediaFrame;
 
-                // PRIORITY 1: Use GPU-assisted Direct3D processing
-                // This is the fastest path for Preview, bypassing SoftwareBitmap overhead
-                if (videoFrame.Direct3DSurface != null)
-                {
-                    //Debug.WriteLine("[NativeCameraWindows] Frame arrived with Direct3D surface, using GPU-assisted processing...");
-                    ProcessDirect3DFrameAsync(videoFrame.Direct3DSurface);
-                    return;
-                }
-
-                // PRIORITY 2: Fallback to software bitmap processing
-                if (videoFrame.SoftwareBitmap != null)
-                {
-                    //Debug.WriteLine("[NativeCameraWindows] Frame arrived with software bitmap, processing...");
-                    ProcessFrameAsync(videoFrame.SoftwareBitmap);
-                }
-                else
-                {
-                    //Debug.WriteLine("[NativeCameraWindows] Frame arrived but no usable bitmap format available");
-                }
+                // The software bitmap first, read through raw COM (SoftwareBitmapPixels) so no projected
+                // SoftwareBitmap is created (its constructor adds 1.2 MB of GC pressure per frame); a frame that
+                // has no software bitmap goes through its Direct3D surface. Neither is touched here.
+                ProcessFrameAsync(videoFrame);
             }
             withError = null;
         }
@@ -1197,15 +1533,103 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
     private bool ShouldGeneratePreviewFrame()
     {
-        if (FormsControl.IsRecording || FormsControl.IsPreRecording)
+        if (_gpuCapture || FormsControl.IsRecording || FormsControl.IsPreRecording)
         {
-            return true;
+            return true; // the GPU ring always keeps the newest frame; the UI takes the latest when it draws
         }
 
         lock (_lockPreview)
         {
             return _preview == null;
         }
+    }
+
+    /// <summary>
+    /// Preview frame from a software bitmap. The pixels are taken through the raw COM interfaces
+    /// (<see cref="SoftwareBitmapPixels"/>) so that no projected <see cref="SoftwareBitmap"/> / BitmapBuffer object
+    /// exists per frame; only the pre-recording buffer and unusual pixel formats fall back to the projected path.
+    /// </summary>
+    private async void ProcessFrameAsync(VideoMediaFrame videoFrame)
+    {
+        if (!await _frameSemaphore.WaitAsync(1)) // Skip if busy processing
+        {
+            FormsControl?.OnWindowsRecordingSourceDrop();
+            return;
+        }
+
+        _isProcessingFrame = true;
+        CapturedImage capturedImage = null;
+        var frameStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        try
+        {
+            var preRecording = _enablePreRecording && !_isRecordingVideo;
+            var skImage = preRecording ? null : SoftwareBitmapPixels.Wrap(videoFrame);
+            if (skImage == null)
+            {
+                // disposed after use: an undisposed surface keeps its texture referenced until a GC finalizes it,
+                // and Media Foundation allocates a new texture for every frame meanwhile
+                using var d3dSurface = preRecording ? null : videoFrame.Direct3DSurface;
+                if (d3dSurface != null)
+                {
+                    // staging-texture readback when the surface is DXGI-backed, else a GPU copy into a software bitmap;
+                    // a decoded compressed format is converted to BGRA by the video processor first
+                    skImage = _rasterNative ? ConvertNativeFrameToRaster(d3dSurface) : ConvertDirect3DToOptimizedSKImage(d3dSurface);
+                    if (skImage != null)
+                        SoftwareBitmapPixels.D3DOptimized++;
+                    else
+                        SoftwareBitmapPixels.D3DFallbacks++;
+                    if (skImage == null)
+                    {
+                        var copy = await SoftwareBitmap.CreateCopyFromSurfaceAsync(d3dSurface);
+                        if (copy != null)
+                        {
+                            skImage = await ConvertToSKImageDirectAsync(copy);
+                            copy.Dispose();
+                        }
+                    }
+                }
+                else
+                {
+                    var softwareBitmap = videoFrame.SoftwareBitmap;
+                    if (softwareBitmap != null)
+                    {
+                        if (preRecording)
+                            BufferPreRecordingFrameFromBitmap(softwareBitmap);
+                        skImage = await ConvertToSKImageDirectAsync(softwareBitmap);
+                    }
+                }
+            }
+
+            if (skImage != null)
+            {
+                var meta = FormsControl.CameraDevice.Meta;
+                var rotation = FormsControl.DeviceRotation;
+                Metadata.ApplyRotation(meta, rotation);
+
+                capturedImage = new CapturedImage()
+                {
+                    DeviceRotation = FormsControl.DeviceRotation,
+                    Facing = FormsControl.CameraDevice?.Position ?? FormsControl.Facing,
+                    Time = DateTime.UtcNow,
+                    Image = skImage, // Transfer ownership to CapturedImage - renderer will dispose
+                    Meta = meta,
+                    Rotation = rotation
+                };
+                AddCameraTiming(System.Diagnostics.Stopwatch.GetElapsedTime(frameStart).TotalMilliseconds);
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.WriteLine($"[NativeCameraWindows] ProcessFrameAsync error: {e}");
+        }
+        finally
+        {
+            _isProcessingFrame = false;
+            _frameSemaphore?.Release();
+        }
+
+        DeliverCapturedFrame(capturedImage);
     }
 
     /// <summary>
@@ -1408,7 +1832,8 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     {
         try
         {
-            var softwareBitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(videoFrame.Direct3DSurface);
+            using var surface = videoFrame.Direct3DSurface;
+            var softwareBitmap = await SoftwareBitmap.CreateCopyFromSurfaceAsync(surface);
             if (softwareBitmap != null)
             {
                 //Debug.WriteLine("[NativeCameraWindows] Successfully converted Direct3D surface to software bitmap");
@@ -1433,86 +1858,190 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             return;
         }
 
-        try
-        {
-            //Debug.WriteLine("[NativeCameraWindows] Starting frame reader...");
-            var result = await _frameReader.StartAsync();
-            Debug.WriteLine($"[NativeCameraWindows] Frame reader start result: {result}");
+        var result = await _frameReader.StartAsync();
+        Debug.WriteLine($"[NativeCameraWindows] Frame reader start result: {result}");
 
-            if (result == MediaFrameReaderStartStatus.Success)
-            {
-                State = CameraProcessorState.Enabled;
-                //Debug.WriteLine("[NativeCameraWindows] Camera started successfully");
+        if (result != MediaFrameReaderStartStatus.Success)
+            throw new InvalidOperationException($"frame reader did not start: {result}"); // reported by the lifecycle loop
 
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    DeviceDisplay.Current.KeepScreenOn = true;
-                });
-            }
-            else
-            {
-                Debug.WriteLine($"[NativeCameraWindows] Failed to start frame reader: {result}");
-                State = CameraProcessorState.Error;
-            }
-        }
-        catch (Exception e)
+        State = CameraProcessorState.Enabled;
+
+        MainThread.BeginInvokeOnMainThread(() =>
         {
-            Debug.WriteLine($"[NativeCameraWindows] StartFrameReaderAsync error: {e}");
-            State = CameraProcessorState.Error;
-        }
+            DeviceDisplay.Current.KeepScreenOn = true;
+        });
     }
 
     #endregion
 
     #region INativeCamera Implementation
 
-    public async void Start()
+    // Start and Stop only record what the control wants; one lifecycle loop applies the wishes in call order.
+    // A restart (Stop(true) then Start) is therefore one ordered sequence: Start used to run while Stop was still
+    // awaiting the reader, and Stop then released the hardware Start had just set up (dead preview, no frames).
+    // Wishes arriving while a step runs are coalesced: the loop applies only the latest one afterwards.
+    private readonly object _lifecycleLock = new();
+    private bool _lifecycleRunning;
+    private bool _wantOn, _wantRelease;
+    private int _wantGeneration;
+    private (bool On, bool Release, int Generation) _appliedWish;
+    private volatile bool _disposed;
+    private readonly Queue<(Func<Task> Run, TaskCompletionSource Done)> _lifecycleActions = new();
+
+    /// <summary>
+    /// Runs an operation that stops and restarts the frame reader (still capture, preview format change) as a step of the
+    /// lifecycle loop, after any pending start or stop, so it never overlaps one. The task ends when the step ran.
+    /// </summary>
+    private Task RunInLifecycle(Func<Task> action)
     {
-        // Acquire global lock to ensure previous camera is fully stopped
-        if (!_hasLock)
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_lifecycleLock)
+            _lifecycleActions.Enqueue((action, done));
+        RunLifecycle();
+        return done.Task;
+    }
+
+    public void Start()
+    {
+        lock (_lifecycleLock)
         {
-            if (await _cameraLock.WaitAsync(5000))
-            {
-                _hasLock = true;
-            }
-            else
-            {
-                Debug.WriteLine("[NativeCameraWindows] FAILED to acquire camera lock - potential resource conflict");
-                return; // Abort start if lock cannot be acquired
-            }
+            _wantOn = true;
+            _wantRelease = false;
+            _wantGeneration++; // settings may have changed: every start sets the hardware up again, as before
         }
+        RunLifecycle();
+    }
 
-        try
+    public void Stop(bool force = false)
+    {
+        lock (_lifecycleLock)
         {
-            Setup();
-
-            if (State == CameraProcessorState.Enabled && _frameReader != null)
-            {
-                //Debug.WriteLine("[NativeCameraWindows] Camera already started");
-                return;
-            }
-
-            await StartFrameReaderAsync();
-
-            // Apply current flash modes after camera starts
-            if (State == CameraProcessorState.Enabled)
-            {
-                ApplyFlashMode();
-            }
+            _wantOn = false;
+            _wantRelease |= force;
         }
-        catch (Exception e)
+        RunLifecycle();
+    }
+
+    private void RunLifecycle()
+    {
+        lock (_lifecycleLock)
         {
-            Debug.WriteLine($"[NativeCameraWindows] Start error: {e}");
-            // Release lock if start failed
-            if (_hasLock)
+            if (_lifecycleRunning)
+                return; // the running loop picks the new wish up when its current step ends
+            _lifecycleRunning = true;
+        }
+        _ = LifecycleLoopAsync();
+    }
+
+    private async Task LifecycleLoopAsync()
+    {
+        while (true)
+        {
+            (bool On, bool Release, int Generation) wish;
+            (Func<Task> Run, TaskCompletionSource Done) action = default;
+            lock (_lifecycleLock)
             {
-                _cameraLock.Release();
-                _hasLock = false;
+                wish = (_wantOn, _wantRelease, _wantGeneration);
+                if (_disposed)
+                {
+                    while (_lifecycleActions.TryDequeue(out var dropped))
+                        dropped.Done.TrySetCanceled();
+                    _lifecycleRunning = false;
+                    return;
+                }
+                if (wish == _appliedWish)
+                {
+                    // start and stop first, then the operations that need a running reader
+                    if (!_lifecycleActions.TryDequeue(out action))
+                    {
+                        _lifecycleRunning = false;
+                        return;
+                    }
+                }
+                else
+                {
+                    _appliedWish = wish; // also when the step fails: a failed start is reported, not retried in a loop
+                }
+            }
+
+            if (action.Run != null)
+            {
+                try
+                {
+                    await action.Run();
+                    action.Done.TrySetResult();
+                }
+                catch (Exception e)
+                {
+                    action.Done.TrySetException(e);
+                }
+                continue;
+            }
+
+            try
+            {
+                if (wish.On)
+                    await StartCoreAsync(); // state changes still reach the control on the UI thread (the State setter posts them)
+                else
+                    await StopCoreAsync(wish.Release);
+            }
+            catch (Exception e)
+            {
+                if (_hasLock)
+                {
+                    _cameraLock.Release();
+                    _hasLock = false;
+                }
+                if (_disposed)
+                    continue;
+                // as on the other platforms: logged, no OnError; a failed start or stop ends in Error, a camera lock that
+                // another instance keeps leaves the state as it is
+                Super.Log($"[NativeCameraWindows] camera {(wish.On ? "start" : "stop")} failed: {e}");
+                if (e is not TimeoutException)
+                    State = CameraProcessorState.Error;
             }
         }
     }
 
-    public async void Stop(bool force = false)
+    private async Task StartCoreAsync()
+    {
+        // Acquire global lock to ensure previous camera is fully stopped
+        if (!_hasLock)
+        {
+            if (!await _cameraLock.WaitAsync(5000))
+                throw new TimeoutException("the camera lock was not released within 5 s by another camera instance");
+            _hasLock = true;
+        }
+
+        // SetupHardware releases the running capture first. Saying so keeps the control's state true when a
+        // coalesced restart skips its stop step: the control was set Off meanwhile and must see On again.
+        State = CameraProcessorState.None;
+
+        // the frame reader is created and started in there
+        await SetupHardware();
+
+        if (_disposed)
+        {
+            // disposed while setting up: nothing may keep the device or the lock
+            ReleaseHardware();
+            _cameraLock.Release();
+            _hasLock = false;
+            return;
+        }
+
+        if (State == CameraProcessorState.Enabled && _frameReader != null)
+            return;
+
+        await StartFrameReaderAsync();
+
+        // Apply current flash modes after camera starts
+        if (State == CameraProcessorState.Enabled)
+        {
+            ApplyFlashMode();
+        }
+    }
+
+    private async Task StopCoreAsync(bool force)
     {
         // Only return early if we definitely don't need to do anything AND we don't hold the lock
         if (!_hasLock && State == CameraProcessorState.None && !force)
@@ -1523,27 +2052,23 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
         try
         {
-            try
+            if (_frameReader != null)
             {
-                //Debug.WriteLine("[NativeCameraWindows] Stopping frame reader...");
-                if (_frameReader != null)
-                {
-                    await _frameReader.StopAsync();
-                    //Debug.WriteLine("[NativeCameraWindows] Frame reader stopped");
-                }
-
-                State = CameraProcessorState.None;
-
-                MainThread.BeginInvokeOnMainThread(() =>
-                {
-                    DeviceDisplay.Current.KeepScreenOn = false;
-                });
+                await _frameReader.StopAsync();
             }
-            catch (Exception e)
+
+            State = CameraProcessorState.None;
+
+            // force means the camera is being switched off, not paused between frames: give the device
+            // back, or Windows keeps it counted as in use and the camera light stays on. Not while
+            // recording — the recording runs through the same MediaCapture.
+            if (force && !_isRecordingVideo)
+                ReleaseHardware();
+
+            MainThread.BeginInvokeOnMainThread(() =>
             {
-                Debug.WriteLine($"[NativeCameraWindows] Stop error: {e}");
-                State = CameraProcessorState.Error;
-            }
+                DeviceDisplay.Current.KeepScreenOn = false;
+            });
         }
         finally
         {
@@ -1752,6 +2277,19 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         IReadOnlyList<Windows.Media.Capture.Frames.MediaFrameFormat> availableFormats,
         double targetAspectRatio)
     {
+        // test only: DRAWNUI_CAMERA_TEST_PREVIEW=1920x1080 (or 1920x1080:MJPG) forces a preview format the automatic choice would not make
+        if (Environment.GetEnvironmentVariable("DRAWNUI_CAMERA_TEST_PREVIEW") is { Length: > 0 } forced)
+        {
+            var parts = forced.Split(':');
+            var match = availableFormats
+                .Where(f => $"{f.VideoFormat.Width}x{f.VideoFormat.Height}" == parts[0]
+                            && (parts.Length < 2 || string.Equals(f.Subtype, parts[1], StringComparison.OrdinalIgnoreCase)))
+                .OrderByDescending(f => f.FrameRate.Numerator / (double)f.FrameRate.Denominator)
+                .FirstOrDefault();
+            if (match != null)
+                return match;
+        }
+
         const double aspectRatioTolerance = 0.1; // 10% tolerance
         const int minWidth = 640;
         const int minHeight = 480;
@@ -1828,6 +2366,9 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     /// <returns></returns>
     public SKImage GetPreviewImage()
     {
+        if (_gpuCapture)
+            return GetGpuPreviewImage(); // UI thread: a GPU image of the UI's context; other threads: a raster copy
+
         lock (_lockPreview)
         {
             SKImage preview = null;
@@ -1843,6 +2384,9 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
     public bool HasBufferedPreviewFrame()
     {
+        if (_gpuCapture)
+            return _gpuPipeline?.Ring?.LatestSlot >= 0;
+
         lock (_lockPreview)
         {
             return _preview != null && _preview.Image != null;
@@ -1852,10 +2396,14 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     /// <summary>
     /// Updates preview format to match current capture format aspect ratio
     /// </summary>
-    public async Task UpdatePreviewFormatAsync()
+    public Task UpdatePreviewFormatAsync() => RunInLifecycle(UpdatePreviewFormatCoreAsync); // stops and restarts the reader
+
+    private async Task UpdatePreviewFormatCoreAsync()
     {
         try
         {
+            if (State != CameraProcessorState.Enabled)
+                return; // switched off meanwhile: the next start picks the format anyway
             if (_frameSource?.SupportedFormats == null)
             {
                 Debug.WriteLine("[NativeCameraWindows] No frame source available for preview format update");
@@ -1893,6 +2441,8 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
                 // Set new format
                 await _frameSource.SetFormatAsync(newPreviewFormat);
+                if (_gpuCapture || _rasterNative)
+                    ReadFrameColour(newPreviewFormat);
 
                 PreviewWidth = (int)newPreviewFormat.VideoFormat.Width;
                 PreviewHeight = (int)newPreviewFormat.VideoFormat.Height;
@@ -2094,12 +2644,29 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         return new CameraManualExposureRange(0, 0, 0, 0, false, null);
     }
 
-    public async void TakePicture()
+    public void TakePicture()
     {
         if (_isCapturingStill || _mediaCapture == null)
             return;
 
         _isCapturingStill = true;
+
+        // the capture stops and restarts the frame reader: a step of the lifecycle loop, never during a start or stop
+        _ = RunInLifecycle(TakePictureCoreAsync).ContinueWith(t =>
+        {
+            _isCapturingStill = false; // skipped because the camera was disposed
+        }, TaskContinuationOptions.OnlyOnCanceled);
+    }
+
+    private async Task TakePictureCoreAsync()
+    {
+        if (_mediaCapture == null || State != CameraProcessorState.Enabled)
+        {
+            _isCapturingStill = false;
+            var off = new InvalidOperationException("the camera was switched off before the picture could be taken");
+            MainThread.BeginInvokeOnMainThread(() => StillImageCaptureFailed?.Invoke(off));
+            return;
+        }
 
         try
         {
@@ -3168,6 +3735,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     {
         try
         {
+            _disposed = true; // the lifecycle loop stops; the hardware is released below
             Stop();
 
             // Stop video recording if active
@@ -3184,8 +3752,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             lock (_lockPreview)
             {
                 _progressTimer?.Dispose();
-                _frameReader?.Dispose();
-                _mediaCapture?.Dispose();
+                ReleaseHardware(); // detaches the frame handler as well, and leaves nothing disposed twice
                 _frameSemaphore?.Dispose();
                 _frameSemaphore = null;
 
@@ -3194,6 +3761,18 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             }
 
             ReleaseCachedReadbackTexture();
+            ReleaseGpuFrameDevice();
+            DisposeGpuCapture();
+
+            // a step still running releases the lock itself when it sees _disposed
+            lock (_lifecycleLock)
+            {
+                if (!_lifecycleRunning && _hasLock)
+                {
+                    _cameraLock.Release();
+                    _hasLock = false;
+                }
+            }
         }
         catch (Exception e)
         {

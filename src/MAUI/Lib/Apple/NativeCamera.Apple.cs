@@ -29,7 +29,7 @@ using static AVFoundation.AVMetadataIdentifiers;
 namespace DrawnUi.Camera;
 
 
-public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotifyPropertyChanged, IAVCaptureVideoDataOutputSampleBufferDelegate, IAVCaptureFileOutputRecordingDelegate, IAudioCapture, IAVCaptureAudioDataOutputSampleBufferDelegate
+public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotifyPropertyChanged, IAVCaptureVideoDataOutputSampleBufferDelegate, IAVCaptureFileOutputRecordingDelegate, IAudioCapture, IAVCaptureAudioDataOutputSampleBufferDelegate, IAVCaptureMetadataOutputObjectsDelegate
 {
     string _lastError;
     public string LastError
@@ -75,6 +75,8 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             var stillImageOutput = _stillImageOutput;
             var deviceInput = _deviceInput;
             var videoDataOutputQueue = _videoDataOutputQueue;
+            var metadataOutput = _metadataOutput;
+            var metadataOutputQueue = _metadataOutputQueue;
             Task.Run(() =>
             {
                 try
@@ -85,6 +87,8 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                     stillImageOutput?.Dispose();
                     deviceInput?.Dispose();
                     videoDataOutputQueue?.Dispose();
+                    metadataOutput?.Dispose();
+                    metadataOutputQueue?.Dispose();
                 }
                 catch (Exception e)
                 {
@@ -133,6 +137,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     private AVCaptureDeviceInput _audioInput;
     private DispatchQueue _videoDataOutputQueue;
     private DispatchQueue _audioDataOutputQueue;
+
+    // Code detection (FormsControl.CodeDetection): created on first use, re-added by every SetupHardware
+    private AVCaptureMetadataOutput _metadataOutput;
+    private DispatchQueue _metadataOutputQueue;
+    private volatile bool _codesReported; // last CodesDetected raise was non-empty
     private CameraProcessorState _state = CameraProcessorState.None;
     private bool _flashSupported;
     private bool _isCapturingStill;
@@ -806,6 +815,8 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                     return;
                 }
 
+                SetupCodeDetection();
+
                 _flashSupported = videoDevice.FlashAvailable;
 
                 var focalLengths = new List<float>();
@@ -1406,6 +1417,13 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             _session.StopRunning();
 
             State = CameraProcessorState.None;
+
+            // consumers clear their overlays on camera flip / restart
+            if (_codesReported)
+            {
+                _codesReported = false;
+                FormsControl?.RaiseCodesDetected(Array.Empty<DetectedCode>());
+            }
 
             MainThread.BeginInvokeOnMainThread(() =>
             {
@@ -2583,6 +2601,141 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         _previewTextureCache?.Flush(CVOptionFlags.None);
         System.Diagnostics.Debug.WriteLine("[NativeCameraiOS] Preview texture reset");
     }
+
+    #region CODE DETECTION
+
+    static readonly (CameraCodeTypes Code, AVMetadataObjectType Native)[] CodeTypeMap =
+    {
+        (CameraCodeTypes.Qr, AVMetadataObjectType.QRCode),
+        (CameraCodeTypes.Aztec, AVMetadataObjectType.AztecCode),
+        (CameraCodeTypes.DataMatrix, AVMetadataObjectType.DataMatrixCode),
+        (CameraCodeTypes.Pdf417, AVMetadataObjectType.PDF417Code),
+        (CameraCodeTypes.Ean13, AVMetadataObjectType.EAN13Code),
+        (CameraCodeTypes.Ean8, AVMetadataObjectType.EAN8Code),
+        (CameraCodeTypes.Code128, AVMetadataObjectType.Code128Code),
+        (CameraCodeTypes.Code39, AVMetadataObjectType.Code39Code),
+    };
+
+    /// <summary>
+    /// Adds the metadata output for FormsControl.CodeDetection. Called by SetupHardware inside the
+    /// session configuration, after the input is added: available types are known only then.
+    /// Never fatal, the camera works without it.
+    /// </summary>
+    void SetupCodeDetection()
+    {
+        var requested = FormsControl.CodeDetection;
+        if (requested == CameraCodeTypes.None)
+            return;
+
+        try
+        {
+            _metadataOutput ??= new AVCaptureMetadataOutput();
+            if (!_session.CanAddOutput(_metadataOutput))
+            {
+                Console.WriteLine("[NativeCameraiOS] Could not add metadata output to the session");
+                return;
+            }
+
+            _session.AddOutput(_metadataOutput);
+            _metadataOutputQueue ??= new DispatchQueue("MetadataOutput", false);
+            _metadataOutput.SetDelegate(this, _metadataOutputQueue);
+
+            var types = AVMetadataObjectType.None;
+            foreach (var (code, native) in CodeTypeMap)
+            {
+                if ((requested & code) != 0)
+                    types |= native;
+            }
+
+            // setting a type the device does not offer throws an ObjC exception
+            types &= _metadataOutput.AvailableMetadataObjectTypes;
+            if (types == AVMetadataObjectType.None)
+            {
+                _session.RemoveOutput(_metadataOutput);
+                return;
+            }
+
+            _metadataOutput.MetadataObjectTypes = types;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"[NativeCameraiOS] Code detection setup error: {e}");
+        }
+    }
+
+    [Export("captureOutput:didOutputMetadataObjects:fromConnection:")]
+    public void DidOutputMetadataObjects(AVCaptureMetadataOutput captureOutput, AVMetadataObject[] metadataObjects, AVCaptureConnection connection)
+    {
+        try
+        {
+            var control = FormsControl;
+            if (control == null || State != CameraProcessorState.Enabled || !control.HasCodesDetectedSubscribers)
+                return;
+
+            // same orientation + mirror the preview dispatch applies in FrameProcessingLoop
+            var rotation = (int)CurrentRotation;
+            var mirror = (control.CameraDevice?.Position ?? control.Facing) == CameraPosition.Selfie;
+
+            List<DetectedCode> codes = null;
+            foreach (var item in metadataObjects)
+            {
+                if (item is not AVMetadataMachineReadableCodeObject readable)
+                    continue;
+
+                var value = readable.StringValue;
+                if (value == null)
+                    continue;
+
+                var type = CameraCodeTypes.None;
+                var native = readable.Type;
+                foreach (var (code, mapped) in CodeTypeMap)
+                {
+                    if (mapped == native)
+                    {
+                        type = code;
+                        break;
+                    }
+                }
+
+                // corners come normalized in the unrotated sensor frame
+                var corners = readable.Corners;
+                var points = new SKPoint[corners.Length];
+                for (int i = 0; i < corners.Length; i++)
+                {
+                    points[i] = MetalPreviewScaler.SensorToPreview((float)corners[i].X, (float)corners[i].Y, rotation, mirror);
+                }
+
+                codes ??= new List<DetectedCode>(metadataObjects.Length);
+                codes.Add(new DetectedCode(value, type, points));
+            }
+
+            if (codes == null)
+            {
+                if (_codesReported)
+                {
+                    _codesReported = false;
+                    control.RaiseCodesDetected(Array.Empty<DetectedCode>());
+                }
+                return;
+            }
+
+            _codesReported = true;
+            control.RaiseCodesDetected(codes);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"[NativeCameraiOS] Code detection error: {e}");
+        }
+        finally
+        {
+            foreach (var item in metadataObjects)
+            {
+                item.Dispose();
+            }
+        }
+    }
+
+    #endregion
 
     [Export("captureOutput:didOutputSampleBuffer:fromConnection:")]
     public void DidOutputSampleBuffer(AVCaptureOutput captureOutput, CMSampleBuffer sampleBuffer, AVCaptureConnection connection)

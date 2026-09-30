@@ -2,6 +2,7 @@
 global using SkiaSharp;
 using CameraTests.Services;
 using Microsoft.Extensions.Logging;
+using Microsoft.Maui.LifecycleEvents;
 
 namespace CameraTests
 {
@@ -51,6 +52,11 @@ namespace CameraTests
                 //    Width = 750,
                 //}
             });
+
+#if WINDOWS
+            // test runs: the measurement window never takes the foreground or focus from whoever works at the desk
+            builder.ConfigureLifecycleEvents(events => events.AddWindows(windows => windows.OnWindowCreated(SampleAutomation.KeepInBackground)));
+#endif
 
             builder.Services.AddSingleton<IRealtimeTranscriptionService, OpenAiRealtimeTranscriptionService>();
 

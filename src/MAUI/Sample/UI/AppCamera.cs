@@ -6,9 +6,6 @@ namespace CameraTests.Views
 {
     public partial class AppCamera : SkiaCamera
     {
-        private SkiaShader _effectShader;
-        private ShaderEffect _loadedEffect;
-
         public static readonly BindableProperty VideoEffectProperty = BindableProperty.Create(
             nameof(VideoEffect),
             typeof(ShaderEffect),
@@ -122,9 +119,73 @@ namespace CameraTests.Views
             }
         }
 
+        /// <summary>
+        /// An .sksl file used instead of <see cref="VideoEffect"/> when set (test runs pick shaders by file).
+        /// </summary>
+        public string CustomShaderPath { get; set; }
+
+        /// <summary>
+        /// Test runs: the ML input of an image through the camera's own Skia scaling (a raster image never takes a GPU
+        /// shortcut), as the reference for the pixel error of the GPU path.
+        /// </summary>
+        public bool ReferenceRgba(SKImage raster, int width, int height, byte[] buffer) => TryGetRgba(raster, width, height, buffer);
+
+        /// <summary>
+        /// Called with every raw frame before the base handling (test runs check the ML input with it).
+        /// </summary>
+        public Action<RawCameraFrame> RawFrameProbe { get; set; }
+
+        protected override void OnRawFrameAvailable(RawCameraFrame frame)
+        {
+            RawFrameProbe?.Invoke(frame);
+            base.OnRawFrameAvailable(frame);
+        }
+
+        /// <summary>
+        /// When true, the UI-thread time of every Paint of this control is collected (test runs).
+        /// </summary>
+        public bool MeasurePaint { get; set; }
+
+        private double _paintMsSum, _paintMsMax;
+        private long _paintCount;
+
+        protected override void Paint(DrawingContext ctx)
+        {
+            if (!MeasurePaint)
+            {
+                base.Paint(ctx);
+                return;
+            }
+            var start = System.Diagnostics.Stopwatch.GetTimestamp();
+            base.Paint(ctx);
+            var ms = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            if (ms > 30)
+                Super.Log($"[AppCamera] paint took {ms:0} ms (from {DateTime.Now.AddMilliseconds(-ms):HH:mm:ss.fff})");
+            lock (this)
+            {
+                _paintMsSum += ms;
+                _paintMsMax = Math.Max(_paintMsMax, ms);
+                _paintCount++;
+            }
+        }
+
+        /// <summary>
+        /// Average and maximum UI-thread milliseconds per Paint since the last call, and the paint count.
+        /// </summary>
+        public (double Average, double Max, long Paints) TakePaintTiming()
+        {
+            lock (this)
+            {
+                var result = (_paintCount > 0 ? _paintMsSum / _paintCount : 0, _paintMsMax, _paintCount);
+                _paintMsSum = _paintMsMax = 0;
+                _paintCount = 0;
+                return result;
+            }
+        }
+
         protected override void RenderPreviewForProcessing(SKCanvas canvas, SKImage frame)
         {
-            var shader = GetEffectShader();
+            var shader = _previewEffect.Get(VideoEffect, CustomShaderPath);
             if (shader == null)
             {
                 base.RenderPreviewForProcessing(canvas, frame);
@@ -136,7 +197,7 @@ namespace CameraTests.Views
 
         protected override void RenderFrameForRecording(SKCanvas canvas, SKImage frame, SKRect src, SKRect dst)
         {
-            var shader = GetEffectShader();
+            var shader = _recordingEffect.Get(VideoEffect, CustomShaderPath);
             if (shader == null)
             {
                 base.RenderFrameForRecording(canvas, frame, src, dst);
@@ -146,46 +207,79 @@ namespace CameraTests.Views
             shader.DrawRect(canvas, frame, dst);
         }
 
-        private SkiaShader GetEffectShader()
+        // One shader instance per role: preview and recording render on different threads (and GPU contexts), and a
+        // SkiaShader keeps per-draw state (paint, uniforms, texture shader) that must not be shared between them.
+        private readonly EffectSlot _previewEffect = new(), _recordingEffect = new();
+
+        private sealed class EffectSlot
         {
-            var effect = VideoEffect;
-            if (effect == ShaderEffect.None)
+            private SkiaShader _shader;
+            private ShaderEffect _effect;
+            private string _path;
+            private bool _loaded;
+
+            public SkiaShader Get(ShaderEffect effect, string path)
             {
-                ReleaseEffectShader();
-                return null;
+                if (string.IsNullOrEmpty(path) && effect == ShaderEffect.None)
+                {
+                    Release();
+                    return null;
+                }
+
+                if (_loaded && _effect == effect && _path == path)
+                {
+                    return _shader; // null when the file could not be loaded: not retried every frame
+                }
+
+                Release();
+                _effect = effect;
+                _path = path;
+                _loaded = true;
+                try
+                {
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        _shader = SkiaShader.FromCode(File.ReadAllText(path));
+                    }
+                    else
+                    {
+                        var filename = ShaderEffectHelper.GetFilename(effect);
+                        if (!string.IsNullOrWhiteSpace(filename))
+                            _shader = SkiaShader.FromResource(filename);
+                    }
+                }
+                catch (Exception e)
+                {
+                    // a missing or broken shader file shows the plain frame instead of taking the camera down
+                    Super.Log($"[AppCamera] shader {path ?? effect.ToString()} not loaded: {e.Message}");
+                    _shader = null;
+                }
+
+                return _shader;
             }
 
-            if (_effectShader != null && _loadedEffect == effect)
+            public void Release()
             {
-                return _effectShader;
+                _shader?.Dispose();
+                _shader = null;
+                _effect = ShaderEffect.None;
+                _path = null;
+                _loaded = false;
             }
-
-            ReleaseEffectShader();
-
-            var filename = ShaderEffectHelper.GetFilename(effect);
-            if (string.IsNullOrWhiteSpace(filename))
-            {
-                return null;
-            }
-
-            _effectShader = SkiaShader.FromResource(filename);
-            _loadedEffect = effect;
-
-            return _effectShader;
         }
 
         private void ReleaseEffectShader()
         {
-            _effectShader?.Dispose();
-            _effectShader = null;
-            _loadedEffect = ShaderEffect.None;
+            _previewEffect.Release();
+            _recordingEffect.Release();
         }
 
         public override void OnWillDisposeWithChildren()
         {
-            ReleaseEffectShader();
-
+            // the camera stops its recording first: its recording thread may still be drawing with these shaders
             base.OnWillDisposeWithChildren();
+
+            ReleaseEffectShader();
 
             _paintRec?.Dispose();
             _paintRec = null;
@@ -478,6 +572,9 @@ namespace CameraTests.Views
 
         protected override void Dispose(bool isDisposing)
         {
+            // the camera stops its recording first: its recording thread may still be drawing with these
+            base.Dispose(isDisposing);
+
             if (isDisposing)
             {
                 _paint?.Dispose();
@@ -485,8 +582,6 @@ namespace CameraTests.Views
                 _font?.Dispose();
                 _fontPreview?.Dispose();
             }
-
-            base.Dispose(isDisposing);
         }
 
         public FrameOverlay CreateOverlay()

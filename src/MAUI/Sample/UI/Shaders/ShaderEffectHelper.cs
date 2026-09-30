@@ -13,6 +13,7 @@ namespace CameraTests.UI
                 ShaderEffect.Runner => "Sci-Fi",
                 ShaderEffect.Desat => "Noir",
                 ShaderEffect.BW => "B&W",
+                ShaderEffect.Sketch => "Sketch",
                 _ => value.ToString()
             };
         }
@@ -27,6 +28,8 @@ namespace CameraTests.UI
                 ShaderEffect.Desat => @"Shaders/snyder.sksl",
                 ShaderEffect.Runner => @"Shaders/blade.sksl",
                 ShaderEffect.BW => @"Shaders/bwclassic.sksl",
+                // a local test asset that is not part of the repository: without the file the effect draws the plain frame
+                ShaderEffect.Sketch => @"Shaders/sketch.sksl",
                 _ => string.Empty
             };
         }

@@ -793,6 +793,11 @@ public partial class MainPage : BasePageReloadable, IDisposable
     /// <param name="captured"></param>
     private async void OnCaptureSuccess(object sender, CapturedImage captured)
     {
+#if WINDOWS
+        if (SampleAutomation.Enabled)
+            return; // test runs check photos themselves and keep them out of the user's gallery
+#endif
+
         if (CameraControl.UseRealtimeVideoProcessing && CameraControl.VideoEffect != ShaderEffect.None)
         {
             //need process
@@ -862,6 +867,11 @@ public partial class MainPage : BasePageReloadable, IDisposable
 
     private async void OnVideoRecordingSuccess(object sender, CapturedVideo capturedVideo)
     {
+#if WINDOWS
+        if (SampleAutomation.Enabled && !SampleAutomation.UiFlow)
+            return; // test runs keep their files out of the user's gallery; the automation copies them itself
+#endif
+
         // since the display image is on the GPU surface we must access it on the GPU thread
         CameraControl.SafeAction(() => //wil be invoked when rendering canvas on GPU thread
         {

@@ -68,6 +68,9 @@ public partial class SkiaCamera : SkiaControl
     private void ResumeWindowsPreviewAfterStop()
     {
         UseRecordingFramesForPreview = false;
+        SafeAction(ReleaseGpuMirrorView);
+        if (NativeControl is NativeCamera cpuFramesCam)
+            cpuFramesCam.CpuFramesWanted = false;
 
         if (NativeControl is not NativeCamera winCam)
         {
@@ -93,6 +96,50 @@ public partial class SkiaCamera : SkiaControl
             return;
 
         System.Threading.Interlocked.Increment(ref _diagHardwareDrops);
+    }
+
+    /// <summary>
+    /// Disposal during a recording, before anything is torn down: as on Android and iOS the recording is finalized and the
+    /// file left where the encoder wrote it, without recording events. The frame being composed is waited for first
+    /// (bounded): RenderFrameForRecording and ProcessFrame run on a recording thread and may use what this control or a
+    /// subclass releases while disposing. A camera that is not recording is not affected.
+    /// </summary>
+    partial void OnWillDisposeWhileRecording()
+    {
+        if (!IsRecording && !IsPreRecording)
+            return;
+        try
+        {
+            if (!Task.Run(FinishRecordingForDisposeAsync).Wait(TimeSpan.FromSeconds(3)))
+                Super.Log("[SkiaCamera] finishing the recording before dispose did not end within 3 s");
+        }
+        catch (Exception e)
+        {
+            Super.Log($"[SkiaCamera] finishing the recording before dispose failed: {e.Message}");
+        }
+    }
+
+    private async Task FinishRecordingForDisposeAsync()
+    {
+        _frameCaptureTimer?.Dispose();
+        _frameCaptureTimer = null;
+        if (NativeControl is NativeCamera camera)
+            camera.PreviewCaptureSuccess = null; // no further frames reach the recording
+        await WaitForWindowsRecordingQueueAsync(dropPendingFrames: true); // the raster frame being composed ends first
+        var encoder = Interlocked.Exchange(ref _captureVideoEncoder, null);
+        StopGpuRecordingIfIdle(); // joins the GPU recorder thread: its frame being composed ends first
+        if (_audioCapture != null)
+        {
+            _audioCapture.SampleAvailable -= OnAudioSampleAvailable;
+            await _audioCapture.StopAsync();
+            _audioCapture.Dispose();
+            _audioCapture = null;
+        }
+        if (encoder != null)
+        {
+            await encoder.StopAsync(); // finalizes the file
+            encoder.Dispose();
+        }
     }
 
     private void ResetWindowsRecordingQueue()
@@ -177,46 +224,14 @@ public partial class SkiaCamera : SkiaControl
         using (winEnc.BeginFrame(elapsed, out var canvas, out var info))
         {
             // srcImg from Windows capture is already in display orientation — no further rotation needed.
-            OnRawFrameAvailable(CreateRawCameraFrameInternal(srcImg, 0));
+            // Fired here once the preview mirrors the recording; until the encoder is ready the live preview fires it.
+            if (UseRecordingFramesForPreview)
+                OnRawFrameAvailable(CreateRawCameraFrameInternal(srcImg, 0));
 
             if (canvas == null)
                 return;
 
-            var rects = GetAspectFillRects(srcImg.Width, srcImg.Height, info.Width, info.Height);
-            RenderFrameForRecording(canvas, srcImg, rects.src, rects.dst);
-
-            if (ProcessFrame != null || VideoDiagnosticsOn)
-            {
-                var rotation = GetActiveRecordingRotation();
-                var needsCheckpoint = ProcessFrame != null || (VideoDiagnosticsOn && rotation != 0);
-                var checkpoint = 0;
-
-                if (needsCheckpoint)
-                {
-                    checkpoint = canvas.Save();
-                    ApplyCanvasRotation(canvas, info.Width, info.Height, rotation);
-                }
-
-                if (ProcessFrame != null)
-                {
-                    var (frameWidth, frameHeight) = GetRotatedDimensions(info.Width, info.Height, rotation);
-                    var frame = new DrawableFrame
-                    {
-                        Width = frameWidth,
-                        Height = frameHeight,
-                        Canvas = canvas,
-                        Time = elapsed,
-                        Scale = 1f
-                    };
-                    ProcessFrame.Invoke(frame);
-                }
-
-                if (VideoDiagnosticsOn)
-                    DrawDiagnostics(canvas, info.Width, info.Height);
-
-                if (needsCheckpoint)
-                    canvas.RestoreToCount(checkpoint);
-            }
+            ComposeRecordingFrame(canvas, info, srcImg, elapsed);
 
             _diagSubmitSw.Restart();
             await winEnc.SubmitFrameAsync();
@@ -224,6 +239,49 @@ public partial class SkiaCamera : SkiaControl
             _diagLastSubmitMs = _diagSubmitSw.Elapsed.TotalMilliseconds;
             System.Threading.Interlocked.Increment(ref _diagSubmittedFrames);
             CalculateRecordingFps();
+        }
+    }
+
+    /// <summary>
+    /// Draws one recording frame: RenderFrameForRecording, then ProcessFrame and diagnostics in the recording orientation.
+    /// Shared by the raster and the GPU recording paths.
+    /// </summary>
+    private void ComposeRecordingFrame(SKCanvas canvas, SKImageInfo info, SKImage srcImg, TimeSpan elapsed)
+    {
+        var rects = GetAspectFillRects(srcImg.Width, srcImg.Height, info.Width, info.Height);
+        RenderFrameForRecording(canvas, srcImg, rects.src, rects.dst);
+
+        if (ProcessFrame != null || VideoDiagnosticsOn)
+        {
+            var rotation = GetActiveRecordingRotation();
+            var needsCheckpoint = ProcessFrame != null || (VideoDiagnosticsOn && rotation != 0);
+            var checkpoint = 0;
+
+            if (needsCheckpoint)
+            {
+                checkpoint = canvas.Save();
+                ApplyCanvasRotation(canvas, info.Width, info.Height, rotation);
+            }
+
+            if (ProcessFrame != null)
+            {
+                var (frameWidth, frameHeight) = GetRotatedDimensions(info.Width, info.Height, rotation);
+                var frame = new DrawableFrame
+                {
+                    Width = frameWidth,
+                    Height = frameHeight,
+                    Canvas = canvas,
+                    Time = elapsed,
+                    Scale = 1f
+                };
+                ProcessFrame.Invoke(frame);
+            }
+
+            if (VideoDiagnosticsOn)
+                DrawDiagnostics(canvas, info.Width, info.Height);
+
+            if (needsCheckpoint)
+                canvas.RestoreToCount(checkpoint);
         }
     }
 
@@ -841,6 +899,7 @@ public partial class SkiaCamera : SkiaControl
 
             // Stop encoder and get result
             CapturedVideo capturedVideo = await encoder?.StopAsync();
+            FinishRecordingReport(encoder);
 
             // iOS/Windows: Mux two files together (legacy approach)
             if (capturedVideo != null && !string.IsNullOrEmpty(_preRecordingFilePath) && File.Exists(_preRecordingFilePath))
@@ -925,6 +984,7 @@ public partial class SkiaCamera : SkiaControl
         {
             // Clean up encoder after StopAsync completes
             encoder?.Dispose();
+            StopGpuRecordingIfIdle();
         }
     }
 
@@ -972,6 +1032,7 @@ public partial class SkiaCamera : SkiaControl
 
             // Stop encoder
             await encoder?.AbortAsync();
+            FinishRecordingReport(encoder);
 
             SetIsRecordingVideo(false);
             ResumeWindowsPreviewAfterStop();
@@ -1005,6 +1066,7 @@ public partial class SkiaCamera : SkiaControl
         {
             // Clean up encoder after StopAsync completes
             encoder?.Dispose();
+            StopGpuRecordingIfIdle();
         }
     }
 
@@ -1014,11 +1076,18 @@ public partial class SkiaCamera : SkiaControl
         StopPreviewAudioCapture();
         ResetWindowsRecordingQueue();
 
-        // Create platform-specific encoder without borrowing the UI GRContext.
-        // Windows recording composition runs on a background thread with a raster surface,
-        // avoiding ANGLE/GRContext races with the UI render pipeline during resize.
-        GRContext grContext = null; // (Superview?.CanvasView as SkiaViewAccelerated)?.GRContext;
-        _captureVideoEncoder = new WindowsCaptureVideoEncoder(grContext);
+        // The live preview keeps running until an encoder can feed it: mirroring the encoder output from here on froze
+        // the preview for the whole encoder start (0.1-1.1 s, the hardware MFT's activation) while camera frames kept
+        // arriving. The raster path switches to its mirror once the encoder is initialized; the GPU path never mirrors.
+        UseRecordingFramesForPreview = false;
+
+        // GPU path when possible (own device, display and GRContext on a recorder thread, never the UI's GRContext);
+        // otherwise the raster path: composition on a background thread with a raster surface.
+        var continuing = _captureVideoEncoder != null; // pre-recording turning into the live recording
+        var report = BeginRecordingReport(continuing);
+        var gpu = await PrepareGpuRecordingAsync(report);
+        GRContext grContext = null;
+        _captureVideoEncoder = gpu != null ? new WindowsCaptureVideoEncoder(gpu) : new WindowsCaptureVideoEncoder(grContext);
 
         // Set parent reference and pre-recording mode
         _captureVideoEncoder.ParentCamera = this;
@@ -1125,6 +1194,11 @@ public partial class SkiaCamera : SkiaControl
         }
 
         await _captureVideoEncoder.InitializeAsync(outputPath, width, height, fps, EnableAudioRecording && _audioCapture != null);
+        if (_captureVideoEncoder is WindowsCaptureVideoEncoder { IsGpu: true } gpuEncoder && report.VideoEncoder != gpuEncoder.VideoTransforms)
+        {
+            report.VideoEncoder = gpuEncoder.VideoTransforms;
+            Super.Log($"[SkiaCamera] GPU recording {width}x{height}: {report.VideoEncoder}", Microsoft.Extensions.Logging.LogLevel.Information);
+        }
 
         // Check if audio encoding was successfully initialized
         bool audioEncodingEnabled = (_captureVideoEncoder is WindowsCaptureVideoEncoder winEnc) && winEnc.IsAudioEncodingEnabled;
@@ -1162,15 +1236,39 @@ public partial class SkiaCamera : SkiaControl
         // Don't use preview-driven capture - use callback like Android
         _useWindowsPreviewDrivenCapture = false;
 
-        // Use encoder's processed frames for preview — ProcessFrame overlay is already baked in,
-        // so ProcessPreview can be skipped, eliminating duplicate GPU overlay work.
-        UseRecordingFramesForPreview = true;
-
         // Set up progress reporting
         _captureVideoEncoder.ProgressReported += (sender, duration) =>
         {
             OnRecordingProgress(duration);
         };
+
+        if (gpu != null)
+        {
+            // As on Android and iOS the preview shows the composed recording frame (ProcessFrame baked in, ProcessPreview
+            // skipped): the recorder shares each frame with the UI through its mirror ring, no copy to the CPU. Camera
+            // frames reach the recorder through the GPU ring; this callback only counts them.
+            UseRecordingFramesForPreview = !Gpu.GpuDevices.TestLivePreviewWhileRecording;
+            if (MirrorRecordingToPreview && UseRecordingFramesForPreview)
+                gpu.MirrorFrame = () => SafeAction(() => UpdatePreview());
+            if (NativeControl is NativeCamera gpuCam)
+            {
+                gpuCam.PreviewCaptureSuccess = _ =>
+                {
+                    CalculateCameraInputFps();
+                    if (IsRecording || IsPreRecording)
+                        Interlocked.Increment(ref _reportOffered);
+                };
+            }
+            return;
+        }
+
+        // Use encoder's processed frames for preview — ProcessFrame overlay is already baked in,
+        // so ProcessPreview can be skipped, eliminating duplicate GPU overlay work.
+        UseRecordingFramesForPreview = true;
+
+        // the raster recorder composes from CPU pixels: a GPU preview then also reads each frame back
+        if (NativeControl is NativeCamera cpuCam)
+            cpuCam.CpuFramesWanted = true;
 
         // Mirror encoder preview to on-screen display (like Apple implementation)
         if (MirrorRecordingToPreview && _captureVideoEncoder is WindowsCaptureVideoEncoder winEncPreview)
@@ -1197,6 +1295,8 @@ public partial class SkiaCamera : SkiaControl
 
                 if ((!IsPreRecording && !IsRecording) || _captureVideoEncoder is not WindowsCaptureVideoEncoder)
                     return;
+
+                Interlocked.Increment(ref _reportOffered);
 
                 var srcImg = captured?.Image;
                 if (srcImg == null)
@@ -1397,6 +1497,8 @@ public partial class SkiaCamera : SkiaControl
             SetIsPreRecording(false);
             RecordingLockedRotation = -1; // Reset on error
             ClearPreRecordingBuffer();
+            Interlocked.Exchange(ref _captureVideoEncoder, null)?.Dispose(); // a failed start leaves no encoder (and no GPU recorder) behind
+            StopGpuRecordingIfIdle();
             RecordingFailed?.Invoke(this, ex);
             throw;
         }
@@ -1428,6 +1530,11 @@ public partial class SkiaCamera : SkiaControl
     {
         _audioSemaphore?.Dispose();
         _audioSemaphore = null;
+
+        (NativeControl as NativeCamera)?.DisarmRecordingRing();
+        Interlocked.Exchange(ref _gpuRecorder, null)?.Dispose();
+        Interlocked.Exchange(ref _gpuRing, null)?.Dispose();
+        ReleaseGpuMirrorView(); // GL names are only deleted when the UI's context is current
     }
 
 
@@ -1590,11 +1697,19 @@ public partial class SkiaCamera : SkiaControl
         if (outputBuffer == null || outputBuffer.Length < required)
             return false;
 
+        // a frame of the GPU preview: its scaled copy was prepared by the video processor on the camera thread
+        if (NativeControl is NativeCamera gpuCamera &&
+            gpuCamera.TryGetGpuRgba(rawImage, targetWidth, targetHeight, outputRotation, cropRatio, outputBuffer))
+            return true;
+
         var info = new SKImageInfo(targetWidth, targetHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
 
-        // Try GPU-backed surface using encoder's GRContext
+        // Try GPU-backed surface using encoder's GRContext. A GPU frame is a texture of the context it is used on: the UI's
+        // (preview, in the paint) or the GPU recorder's (recording, on its thread): scale it there, read back the result
         GRContext grContext = null;
-        if (_captureVideoEncoder is WindowsCaptureVideoEncoder winEnc)
+        if (rawImage.IsTextureBacked)
+            grContext = _gpuRecorder is { IsRecorderThread: true } recorder ? recorder.Context : Superview?.GetGRContext();
+        else if (_captureVideoEncoder is WindowsCaptureVideoEncoder winEnc)
             grContext = winEnc.Context;
 
         SKSurface surface = grContext != null

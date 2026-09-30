@@ -19,6 +19,7 @@
 | 13 | [Raw Frame ML Hook](#13-raw-frame-ml-hook-onrawframeavailablerawcameraframe--trygetrgba) | Zero-overhead GPU-accelerated raw frame access for ML/AI inference |
 | 14 | [Permission Handling](#14-permission-handling) | `NeedPermissions` flags, `CheckPermissions()`, async helpers |
 | 15 | [Complete MVVM Example](#15-complete-mvvm-example) | Full ViewModel + Page example |
+| 16 | [Code Detection](#16-code-detection-qr-and-barcodes) | QR codes and barcodes in the live preview, `CodesDetected`, mapping to the screen |
 
 ## 1. Declaration / Setup
 
@@ -966,3 +967,99 @@ public partial class CameraPage : ContentPage
     }
 }
 ```
+
+## 16. Code Detection (QR and barcodes)
+
+The camera can report machine-readable codes it sees in the live preview. The platform's capture
+pipeline does the detection, so your code never reads frame pixels for it and nothing is added to
+the render thread.
+
+**Platforms:** iOS. `SkiaCamera.IsCodeDetectionSupported` is `false` on Android, Windows and
+Mac Catalyst for now; setting `CodeDetection` there does nothing.
+
+| Member | Description |
+|--------|-------------|
+| `CodeDetection` | Flags of `CameraCodeTypes` to look for. Default `None`: detection is off and costs nothing. Changing it while the camera is on restarts the camera, so set it before `IsOn = true` when you can. |
+| `CodesDetected` | `EventHandler<IReadOnlyList<DetectedCode>>`. Raised while codes are in view (up to once per camera frame) and once with an empty list when they are gone or the camera stops. **Not raised on the UI thread or the render thread.** |
+| `DetectedCode` | `Value` (decoded text), `Type` (one `CameraCodeTypes` flag), `Corners` (normalized 0..1 inside the displayed preview image). |
+| `TryMapPreviewPoint` | Maps a normalized corner to canvas pixels through `DisplayRect` and `MirrorPreviewX/Y`. |
+
+```csharp
+if (SkiaCamera.IsCodeDetectionSupported)
+{
+    camera.CodeDetection = CameraCodeTypes.Qr;   // before IsOn = true: no restart
+    camera.CodesDetected += OnCodesDetected;
+}
+
+void OnCodesDetected(object sender, IReadOnlyList<DetectedCode> codes)
+{
+    // background thread, called often: do little here, skip repeats, then go to the UI thread
+    foreach (var code in codes)
+    {
+        if (!Uri.TryCreate(code.Value, UriKind.Absolute, out var link)
+            || (link.Scheme != Uri.UriSchemeHttp && link.Scheme != Uri.UriSchemeHttps))
+            continue;
+
+        if (camera.TryMapPreviewPoint(code.Corners[0], out var pixels))
+        {
+            var x = pixels.X / camera.RenderingScale;   // points
+            var y = pixels.Y / camera.RenderingScale;
+            MainThread.BeginInvokeOnMainThread(() => ShowLink(link, x, y));
+        }
+        return;
+    }
+
+    MainThread.BeginInvokeOnMainThread(HideLink);
+}
+```
+
+Notes:
+
+- **`Value` is untrusted input.** It is whatever someone printed. Check it before you act on it, and
+  never open a link or launch anything without the user asking for it.
+- The same code arrives on every camera frame while it is in view. Compare with the last one and
+  update your UI only when the text or the position really changed.
+- A mapped point can fall outside the control when the preview is cropped by its `Aspect`. Hide or
+  clamp your overlay then.
+- Corner winding is not guaranteed (a mirrored selfie preview reverses it). Use the corners as a
+  set: their average is the center, min/max give the box.
+- Up to four 2D codes are reported at once, and one 1D code (an iOS limit).
+- While recording with `UseRecordingFramesForPreview`, the preview shows encoder frames, which are
+  center-cropped to the video aspect. When the sensor format has another aspect, mapped points are
+  offset during the recording. Hide code overlays while `IsRecording` if that matters to you.
+
+### Passkey sign-in codes
+
+A site that offers "sign in with a passkey on another device" shows a QR code. Its text is `FIDO:/`
+followed by digits. The system can take it from there: it shows its own passkey sheet, checks that
+the two devices are near each other and signs the user in. Your app only passes the code on and
+never sees a key.
+
+| Member | Description |
+|--------|-------------|
+| `DetectedCode.IsPasskeySignIn` | True when the code's text is `FIDO:/` plus digits only. |
+| `SkiaCamera.IsPasskeySignInSupported` | True where the system can take such a code. iOS 16 and later for now. |
+| `SkiaCamera.StartPasskeySignInAsync(code)` | Hands the code to the system. Returns false when it is not a passkey code, the platform cannot do it, or the system refused. Safe to call from any thread. |
+
+```csharp
+void OnCodesDetected(object sender, IReadOnlyList<DetectedCode> codes)
+{
+    foreach (var code in codes)
+    {
+        if (code.IsPasskeySignIn && SkiaCamera.IsPasskeySignInSupported)
+        {
+            MainThread.BeginInvokeOnMainThread(() => ShowPasskeyButton(code));   // your UI
+            return;
+        }
+    }
+}
+
+// when the user taps your button
+async void OnPasskeyTapped(DetectedCode code)
+{
+    var started = await SkiaCamera.StartPasskeySignInAsync(code);
+}
+```
+
+Start it only from a user action such as a tap, never by itself when the code is detected. The code
+is short-lived: the site replaces it after a while, so use the one detected last.

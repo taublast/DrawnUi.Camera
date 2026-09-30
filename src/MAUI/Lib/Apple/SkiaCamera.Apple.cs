@@ -1387,6 +1387,12 @@ public partial class SkiaCamera
         NativeControl?.ApplyDeviceOrientation(DeviceRotation);
     }
 
+    // The metadata output is added in NativeCamera.SetupHardware, so a change needs the session rebuilt.
+    partial void OnCodeDetectionChanged()
+    {
+        NeedRestart(this, null, null);
+    }
+
     /// <summary>
     /// Returns the device types used for camera discovery on this iOS version.
     /// Must be consistent everywhere we enumerate or look up cameras.

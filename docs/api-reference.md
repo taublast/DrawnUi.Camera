@@ -50,6 +50,16 @@ public CameraAudioMode AudioMode { get; set; }     // Audio processing mode (def
 // Video/Audio Control
 public bool EnableVideoPreview { get; set; }       // Show video preview (default: true)
 public bool EnableVideoRecording { get; set; }     // Record video frames (default: true)
+
+// Code Detection (QR, barcodes)
+public CameraCodeTypes CodeDetection { get; set; } // Formats to detect in the live preview (default: None = off, no cost)
+public static bool IsCodeDetectionSupported { get; }  // Platform can detect codes (currently iOS only)
+public SKRect DisplayRect { get; }                 // Drawn preview image rect, canvas pixels
+public bool TryMapPreviewPoint(SKPoint normalized, out SKPoint pixels)  // Preview-normalized point -> canvas pixels
+
+// Passkey sign-in codes ("FIDO:/..." QR shown by a site)
+public static bool IsPasskeySignInSupported { get; }  // System can take such a code (currently iOS 16+)
+public static Task<bool> StartPasskeySignInAsync(DetectedCode code)  // Hands the code to the system; call from a tap
 ```
 
 ## Core Methods
@@ -136,6 +146,9 @@ public event EventHandler<LoadedImageSource> NewPreviewSet;    // Final displaye
 public event EventHandler<HardwareState> StateChanged;
 public event EventHandler<string> OnError;
 public event EventHandler<double> Zoomed;
+
+// Code Detection: codes in view, an empty list when they are gone. Not raised on the UI or render thread.
+public event EventHandler<IReadOnlyList<DetectedCode>> CodesDetected;
 ```
 
 ## RawCameraFrame
@@ -222,9 +235,22 @@ public class CapturedVideo
 }
 ```
 
+### DetectedCode
+
+```csharp
+public sealed class DetectedCode
+{
+    public string Value { get; }            // Decoded text. Untrusted input: validate before acting on it
+    public CameraCodeTypes Type { get; }    // Format of this code, a single flag
+    public SKPoint[] Corners { get; }       // Normalized 0..1 in the displayed preview image, winding not guaranteed
+    public bool IsPasskeySignIn { get; }    // Text is "FIDO:/" + digits: a passkey sign-in code
+}
+```
+
 ## Enums
 
 ```csharp
+[Flags] public enum CameraCodeTypes { None, Qr, Aztec, DataMatrix, Pdf417, Ean13, Ean8, Code128, Code39 }
 public enum CameraPosition { Default, Selfie, Manual }
 public enum HardwareState { Off, On, Error }
 public enum CaptureQuality { Max, Medium, Low, Preview, Manual }

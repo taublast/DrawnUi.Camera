@@ -110,6 +110,56 @@ namespace DrawnUi.Camera
             public Vector2 CropSize;
         }
 
+        /// <summary>
+        /// Inverse of the scaleTexture kernel's UV transform with identity crop (what the preview
+        /// dispatch uses): a point normalized in the sensor texture to the same point normalized in
+        /// the rotated/mirrored output texture.
+        /// </summary>
+        public static SkiaSharp.SKPoint SensorToPreview(float sx, float sy, int rotation, bool mirror)
+        {
+            float u, v;
+            switch (rotation)
+            {
+                case 90: u = 1f - sy; v = sx; break;
+                case 180: u = 1f - sx; v = 1f - sy; break;
+                case 270: u = sy; v = 1f - sx; break;
+                default: u = sx; v = sy; break;
+            }
+
+            if (mirror)
+                u = 1f - u;
+
+            return new SkiaSharp.SKPoint(u, v);
+        }
+
+#if DEBUG
+        // Round-trips SensorToPreview against the kernel's forward formulas for all 8 cases.
+        static MetalPreviewScaler()
+        {
+            foreach (var rotation in new[] { 0, 90, 180, 270 })
+            {
+                foreach (var mirror in new[] { false, true })
+                {
+                    const float u = 0.2f, v = 0.7f; // output uv, as the kernel sees it
+                    var x = mirror ? 1f - u : u;
+                    float sx, sy;
+                    switch (rotation)
+                    {
+                        case 90: sx = v; sy = 1f - x; break;
+                        case 180: sx = 1f - x; sy = 1f - v; break;
+                        case 270: sx = 1f - v; sy = x; break;
+                        default: sx = x; sy = v; break;
+                    }
+
+                    var back = SensorToPreview(sx, sy, rotation, mirror);
+                    System.Diagnostics.Debug.Assert(
+                        Math.Abs(back.X - u) < 1e-5f && Math.Abs(back.Y - v) < 1e-5f,
+                        $"SensorToPreview mismatch at rotation {rotation}, mirror {mirror}");
+                }
+            }
+        }
+#endif
+
         public bool IsInitialized => _isInitialized;
         public int OutputWidth => _outputWidth;
         public int OutputHeight => _outputHeight;

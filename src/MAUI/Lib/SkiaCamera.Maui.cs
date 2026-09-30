@@ -2058,6 +2058,36 @@ public partial class SkiaCamera : SkiaControl
     public SKRect DisplayRect { get; private set; } = SKRect.Empty;
 
     /// <summary>
+    /// Maps a point normalized 0..1 inside the displayed preview image (as in <see cref="DetectedCode.Corners"/>)
+    /// to canvas pixels, through <see cref="DisplayRect"/> and the MirrorPreviewX/Y display flip.
+    /// The result can fall outside the control when the preview is cropped by its aspect.
+    /// Returns false until the preview was drawn once.
+    /// </summary>
+    public bool TryMapPreviewPoint(SKPoint normalized, out SKPoint pixels)
+    {
+        var rect = DisplayRect;
+        var display = Display;
+        if (rect.IsEmpty || display == null)
+        {
+            pixels = default;
+            return false;
+        }
+
+        var x = rect.Left + normalized.X * rect.Width;
+        var y = rect.Top + normalized.Y * rect.Height;
+
+        // the flags, not Display.ScaleX: that one is inverted while recording a selfie
+        var box = display.DrawingRect;
+        if (MirrorPreviewX)
+            x = box.Left + box.Right - x;
+        if (MirrorPreviewY)
+            y = box.Top + box.Bottom - y;
+
+        pixels = new SKPoint(x, y);
+        return true;
+    }
+
+    /// <summary>
     /// Platform hook at the start of disposal, before anything is torn down (Windows finalizes a running recording there).
     /// </summary>
     partial void OnWillDisposeWhileRecording();

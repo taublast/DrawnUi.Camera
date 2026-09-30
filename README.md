@@ -18,6 +18,7 @@ Use as Camera or a standalone Audio recorder inside any MAUI app by wrapping wit
 - Zoom control with configurable limits
 - Dual-channel flash control (preview torch + capture flash)
 - GPS injection and custom EXIF for both photos and videos
+- QR code and barcode detection in the live preview (iOS)
 - Built-in permission handling
 
 Read the [blog article](https://taublast.github.io/posts/VideoRecording) about the sample app coming along with this repo.
@@ -27,18 +28,19 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.6.211
+## What's New  1.10.6.212
 
  * Built on DrawnUi 1.10.6.21 (`DrawnUi.Maui` / `DrawnUi.Net`).
+ * iOS: the camera finds QR codes and barcodes in the live preview. Set `CodeDetection` (for example `CameraCodeTypes.Qr`) and listen to `CodesDetected`: every code comes with its text and its corners, and `TryMapPreviewPoint` turns a corner into a position on the canvas. The system's capture pipeline does the detection, so your code reads no frame pixels for it and nothing is added to the render thread. Off by default, and off costs nothing. `SkiaCamera.IsCodeDetectionSupported` tells whether the platform can do it: iOS for now. See the [Usage Guide](docs/usage-guide.md#16-code-detection-qr-and-barcodes).
+
+## Previously 
+
  * Windows: the camera preview and video recording now run on the GPU (`UseGpuProcessing`, on by default). Frames reach the screen and the encoder without a CPU copy, hardware video encoders are used, and CPU use drops. When the machine can't do it (another GPU, a driver refusing the device) the camera falls back to the previous path by itself, never a black preview.
  * Windows: recordings start with their first frame, the preview stays live while a recording starts, and switching the camera off and on quickly no longer kills the preview.
  * Windows: ML frame access (`TryGetRgba`) on GPU frames is prepared on the camera thread, so it costs the UI thread about half as much (ex. 1.6 ms instead of 2.9 ms at 1080p), and the bytes always belong to the frame you got.
  * Windows: a camera switched on before its canvas first draws still gets the GPU path.
  * Windows: less work per camera frame, and each frame's Direct3D surface is released right after use.
  * Windows: `GetPreviewImage` never waits for a frame, and a failed camera start or stop no longer raises `OnError`, both as on Android and iOS.
-
-## Previously 
-
  * Windows: the preview no longer breaks when another library in the app opens Direct3D (ONNX Runtime with DirectML, for example), which used to bring back heavy garbage collection and stutter.
  * Windows: no more full garbage collections twenty times a second while the camera is on, so scrolling no longer stutters in any window.
  * Windows: switching the camera off hands the device back, so the webcam light and privacy indicator go off and other apps can use it. A running recording keeps the device.
@@ -385,7 +387,7 @@ Performance note:
 
 | Document | Description |
 |----------|-------------|
-| [Usage Guide](docs/usage-guide.md) | Setup, properties, lifecycle, flash, capture, zoom, effects, live processing, permissions, MVVM example |
+| [Usage Guide](docs/usage-guide.md) | Setup, properties, lifecycle, flash, capture, zoom, effects, live processing, permissions, MVVM example, code detection |
 | [Video Recording](docs/video-recording.md) | Recording, audio control, real-time processing, GPS & metadata, AudioSampleConverter |
 | [API Reference](docs/api-reference.md) | Properties, methods, events, data classes, enums |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues, debug tips, best practices, platform notes |

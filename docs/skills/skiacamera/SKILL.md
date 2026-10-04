@@ -1,6 +1,6 @@
 ---
 name: skiacamera
-description: Working with DrawnUi.Maui.Camera (SkiaCamera) - device-specific gotchas learned on real phones. Load before touching camera start, format selection, permissions or preview code.
+description: Working with DrawnUi.Maui.Camera (SkiaCamera) - device-specific gotchas learned on real phones. Load before touching camera start, format selection, permissions, preview code or MockSource.
 ---
 
 # SkiaCamera field notes
@@ -35,3 +35,21 @@ description: Working with DrawnUi.Maui.Camera (SkiaCamera) - device-specific got
   new device (mirror, thumbnails) must wait for the first frame, not for `On`.
 - After a (re)start the auto exposure ramps for up to a second: first frames are black, then over-
   and under-shoot. `IsAdjustingExposure` (KVO on `adjustingExposure`) tells when it settled.
+
+## Mock source: a still image instead of the camera
+
+- `camera.MockSource = SKImage.FromEncodedData(stream)` replaces the hardware with the image: store
+  screenshots, demos, the iOS Simulator (no camera), tests. The hardware is not started and the camera
+  permission is not asked (the other `NeedPermissionsSet` flags are). `State` goes On as usual.
+- Frames arrive about 30 per second through the normal camera path, so preview shaders
+  (`RenderPreviewForProcessing`), `ProcessPreview`, `NewPreviewSet` and `OnRawFrameAvailable` +
+  `frame.TryGetRgba` all see the image. Test the app's live looks on it as on a camera feed.
+- Use upright pixels: `SKImage.FromEncodedData` ignores EXIF orientation. A GPU texture image cannot be
+  read and is ignored (logged). The camera copies the pixels, the caller keeps the image.
+- `TakePicture()` returns the image as `CapturedImage` (`Rotation = 0`, `DeviceRotation = 0`,
+  `Meta.Orientation = 1`); `RenderCapturedPhotoAsync` and `SaveToGalleryAsync` work unchanged.
+- Video recording is not available: `StartVideoRecording()` raises `RecordingFailed` and throws
+  `NotSupportedException`. A REC screen cannot be shown from a mock.
+- Set or clear it any time outside a recording: setting it while the camera runs stops the hardware,
+  clearing it starts the hardware. Facing, format and capture-mode changes restart it like the camera.
+- Keep it out of release builds yourself (a debug menu); when null it costs nothing.

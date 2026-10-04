@@ -781,6 +781,29 @@ public partial class MainPage : BasePageReloadable, IDisposable
             : CaptureModeType.Still;
     }
 
+    private SKImage _mockImage;
+
+    /// <summary>
+    /// Replaces the hardware camera with a still image and back. The image goes through the same
+    /// preview path as camera frames (effects, overlays) and TakePicture returns it.
+    /// </summary>
+    private async Task ToggleMockSource()
+    {
+        if (CameraControl.MockSource != null)
+        {
+            CameraControl.MockSource = null;
+            return;
+        }
+
+        if (_mockImage == null)
+        {
+            await using var stream = await FileSystem.OpenAppPackageFileAsync("Images/8.jpg");
+            _mockImage = SKImage.FromEncodedData(stream);
+        }
+
+        CameraControl.MockSource = _mockImage;
+    }
+
     private CapturedImage _currentCapturedImage;
     private string _lastSavedPhotoPath;
     private string _lastSavedVideoPath;

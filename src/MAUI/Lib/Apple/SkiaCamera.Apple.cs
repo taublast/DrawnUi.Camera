@@ -2834,6 +2834,8 @@ public partial class SkiaCamera
 
         try
         {
+            ThrowIfMockSource();
+
             // State 1 -> State 2: If pre-recording enabled and not yet in pre-recording phase, start memory-only recording
             if (EnablePreRecording && !IsPreRecording && !IsRecording)
             {
@@ -4120,6 +4122,10 @@ public partial class SkiaCamera
     private partial bool TryGetRgbaCore(SKImage? rawImage, int targetWidth, int targetHeight, byte[] outputBuffer,
         int outputRotation, float cropRatio)
     {
+        // a mock source frame is a raster image, there is no camera texture
+        if (_mockBitmap != null)
+            return TryGetRgbaOnCpu(rawImage, targetWidth, targetHeight, outputBuffer, outputRotation, cropRatio);
+
         if (NativeControl is not NativeCamera nativeCam)
             return false;
 

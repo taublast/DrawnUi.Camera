@@ -16,7 +16,7 @@ namespace CameraTests;
 /// inside this process through the camera control's own API: no desktop input is simulated. Writes a log and one RESULT line,
 /// then exits with code 0 on success.
 /// <code>
-/// --auto-run record|preview|restart-test|photo|dispose-test
+/// --auto-run record|preview|restart-test|photo|dispose-test|mock
 /// --dispose-during start|recording  dispose-test: when the camera control is disposed
 /// --capture video|still          capture mode (record: video)
 /// --video-format 1280x720@30     one of the camera's video formats, or --video-quality low|standard|high|ultra
@@ -192,6 +192,7 @@ public static class SampleAutomation
 
     static readonly Stopwatch Clock = Stopwatch.StartNew();
     static long _previewFrames;
+    static (int Width, int Height) _lastPreviewSize;
     static readonly List<double> PreviewTimes = new();
 
     static async Task RunAsync(Window window, string outDir)
@@ -202,8 +203,11 @@ public static class SampleAutomation
         {
             var mode = Arg("--auto-run");
             var cam = await FindCamera(window);
-            cam.NewPreviewSet += (_, _) =>
+            if (mode == "mock")
+                await OnMain(() => cam.MockSource = MockImage); // before the page switches the camera on
+            cam.NewPreviewSet += (_, source) =>
             {
+                _lastPreviewSize = (source.Image?.Width ?? 0, source.Image?.Height ?? 0);
                 Interlocked.Increment(ref _previewFrames);
                 var now = Clock.Elapsed.TotalMilliseconds;
                 lock (PreviewTimes)
@@ -249,6 +253,7 @@ public static class SampleAutomation
                 "photo" => await Photo(cam, result),
                 "dispose-test" => await DisposeTest(cam, result),
                 "ui-record" => await UiRecord(window, cam, outDir, result),
+                "mock" => await Mock(cam, result),
                 _ => throw new Exception($"unknown --auto-run {mode}")
             };
             _stopMemory = true;
@@ -706,6 +711,177 @@ public static class SampleAutomation
         }
         result.Append($" mode=photo photos={repeat} sizes={string.Join(",", sizes.Distinct())} failures={fails}");
         return fails == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// MockSource test image, 900x1200 (a size no webcam delivers): top half red, bottom half blue, so orientation shows.
+    /// </summary>
+    static readonly SKImage MockImage = CreateMockImage();
+
+    static SKImage CreateMockImage()
+    {
+        using var surface = SKSurface.Create(new SKImageInfo(900, 1200));
+        surface.Canvas.Clear(SKColors.Blue);
+        using var red = new SKPaint { Color = SKColors.Red };
+        surface.Canvas.DrawRect(0, 0, 900, 600, red);
+        return surface.Snapshot();
+    }
+
+    static bool IsRed(byte r, byte g, byte b) => r > 200 && g < 60 && b < 60;
+    static bool IsBlue(byte r, byte g, byte b) => b > 200 && r < 60 && g < 60;
+
+    /// <summary>
+    /// MockSource: the page switches the camera on with the mock already set. Frames must arrive at about 30 fps, upright,
+    /// through NewPreviewSet, ProcessPreview and the raw-frame hook, with the hardware never opened. TakePicture returns the
+    /// image, rendering and saving it works, video recording is refused, zoom and facing changes keep the mock, IsOn
+    /// off/on works. Clearing it opens the camera; setting it again while the camera runs closes the camera and State stays On.
+    /// </summary>
+    static async Task<int> Mock(AppCamera cam, StringBuilder result)
+    {
+        var fails = new List<string>();
+        void Check(bool ok, string what)
+        {
+            Log($"{(ok ? "ok" : "FAIL")} {what}");
+            if (!ok)
+                fails.Add(what);
+        }
+
+        var media = cam.NativeControl?.GetType().GetField("_mediaCapture", BindingFlags.NonPublic | BindingFlags.Instance);
+        bool HardwareOpen() => media?.GetValue(cam.NativeControl) != null;
+        bool MockFrames() => _lastPreviewSize == (MockImage.Width, MockImage.Height);
+
+        long processed = 0, rawOk = 0, rawUpright = 0;
+        var original = cam.ProcessPreview;
+        cam.ProcessPreview = frame =>
+        {
+            Interlocked.Increment(ref processed);
+            original?.Invoke(frame);
+        };
+        var rgba = new byte[48 * 64 * 4];
+        cam.RawFrameProbe = frame =>
+        {
+            if (!frame.TryGetRgba(48, 64, rgba))
+                return;
+            rawOk++;
+            int top = (4 * 48 + 24) * 4, bottom = (60 * 48 + 24) * 4;
+            if (IsRed(rgba[top], rgba[top + 1], rgba[top + 2]) && IsBlue(rgba[bottom], rgba[bottom + 1], rgba[bottom + 2]))
+                rawUpright++;
+        };
+
+        // frames from the start, hardware never opened
+        var frames0 = Interlocked.Read(ref _previewFrames);
+        await Task.Delay(3000);
+        var fps = (Interlocked.Read(ref _previewFrames) - frames0) / 3.0;
+        Check(fps is > 20 and < 40, string.Create(CultureInfo.InvariantCulture, $"mock frames at {fps:0.0} fps"));
+        Check(MockFrames(), $"preview frame {_lastPreviewSize} is the mock image");
+        Check(processed > 0, $"ProcessPreview called {processed} times");
+        Check(rawOk > 0 && rawUpright == rawOk, $"raw frames TryGetRgba ok {rawOk}, upright {rawUpright}");
+        Check(cam.NativeControl != null && !HardwareOpen(), "hardware camera not opened");
+        Check(Math.Abs(cam.PreviewScale - 1f) < 0.001f, string.Create(CultureInfo.InvariantCulture, $"PreviewScale {cam.PreviewScale:0.000}"));
+
+        // photo: the image itself, then the sample's still pipeline
+        var done = new TaskCompletionSource<CapturedImage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<CapturedImage> onSuccess = (_, image) => done.TrySetResult(image);
+        EventHandler<Exception> onFailed = (_, e) => done.TrySetException(e);
+        cam.CaptureSuccess += onSuccess;
+        cam.CaptureFailed += onFailed;
+        try
+        {
+            await Task.Run(() => cam.TakePicture());
+            if (await Task.WhenAny(done.Task, Task.Delay(10000)) != done.Task)
+                throw new Exception("no CaptureSuccess within 10 s");
+            var captured = await done.Task;
+            using (var pixels = SKBitmap.FromImage(captured.Image))
+            {
+                var top = pixels.GetPixel(450, 300);
+                var bottom = pixels.GetPixel(450, 900);
+                Check(pixels.Width == 900 && pixels.Height == 1200 && IsRed(top.Red, top.Green, top.Blue) && IsBlue(bottom.Red, bottom.Green, bottom.Blue),
+                    $"photo {pixels.Width}x{pixels.Height} is the mock image, upright");
+            }
+            Check(captured.Meta?.Orientation == 1 && !string.IsNullOrEmpty(captured.Meta.Software) && captured.Rotation == 0,
+                $"photo meta orientation={captured.Meta?.Orientation} software=\"{captured.Meta?.Software}\" rotation={captured.Rotation}");
+            captured.Meta.Software = "SkiaCamera mock test";
+
+            var rendered = await cam.RenderCapturedPhotoAsync(captured, overlay: null, drawOverlay: cam.ProcessFrame, useGpu: true);
+            Check(rendered is { Width: 900, Height: 1200 }, $"RenderCapturedPhotoAsync {rendered?.Width}x{rendered?.Height}");
+            captured.Image.Dispose();
+            captured.Image = rendered;
+
+            var path = await cam.SaveToGalleryAsync(captured, "SkiaCameraMockTest");
+            Check(path != null && File.Exists(path), $"SaveToGalleryAsync \"{path}\"");
+            if (path != null && File.Exists(path))
+            {
+                File.Delete(path);
+                var folder = Path.GetDirectoryName(path);
+                if (Directory.Exists(folder) && !Directory.EnumerateFileSystemEntries(folder).Any())
+                    Directory.Delete(folder);
+            }
+            captured.Dispose();
+        }
+        catch (Exception e)
+        {
+            Check(false, "photo: " + e.Message);
+        }
+        finally
+        {
+            cam.CaptureSuccess -= onSuccess;
+            cam.CaptureFailed -= onFailed;
+        }
+
+        // video is refused
+        Exception thrown = null, reported = null;
+        EventHandler<Exception> onRecordingFailed = (_, e) => reported = e;
+        cam.RecordingFailed += onRecordingFailed;
+        await OnMain(() => cam.CaptureMode = CaptureModeType.Video);
+        try
+        {
+            await Task.Run(() => cam.StartVideoRecording());
+        }
+        catch (Exception e)
+        {
+            thrown = e;
+        }
+        cam.RecordingFailed -= onRecordingFailed;
+        Check(thrown is NotSupportedException && reported is NotSupportedException && !cam.IsRecording && !cam.IsPreRecording,
+            $"StartVideoRecording refused: thrown={thrown?.GetType().Name} RecordingFailed={reported?.GetType().Name}");
+        await OnMain(() => cam.CaptureMode = CaptureModeType.Still);
+        Check(await Settle(cam, 10) && MockFrames(), "frames after the capture mode changes");
+
+        // zoom and facing
+        await OnMain(() => cam.Zoom = 2);
+        Check(await WaitFrames(10, 3) && MockFrames(), "frames after Zoom = 2");
+        await OnMain(() =>
+        {
+            cam.Zoom = 1;
+            cam.Facing = CameraPosition.Selfie;
+        });
+        Check(await Settle(cam, 10) && MockFrames() && !HardwareOpen(), "Facing = Selfie keeps the mock");
+        await OnMain(() => cam.Facing = CameraPosition.Default);
+        Check(await Settle(cam, 10) && MockFrames() && !HardwareOpen(), "Facing = Default keeps the mock");
+
+        // IsOn off and on
+        await OnMain(() => cam.IsOn = false);
+        await Task.Delay(1000);
+        Check(cam.State == HardwareState.Off, $"IsOn = false: State {cam.State}");
+        await OnMain(() => cam.IsOn = true);
+        Check(await Settle(cam, 10) && MockFrames() && !HardwareOpen(), "IsOn = true starts the mock again");
+
+        // to the hardware and back while running
+        await OnMain(() => cam.MockSource = null);
+        Check(await Settle(cam, 20) && !MockFrames() && HardwareOpen(), $"MockSource = null opens the camera: frames {_lastPreviewSize}");
+        await OnMain(() => cam.MockSource = MockImage);
+        Check(await Settle(cam, 20) && MockFrames(), "MockSource set while the camera runs: mock frames");
+        await Task.Delay(3000); // late state reports of the stopping hardware
+        Check(cam.State == HardwareState.On && await WaitFrames(30, 3) && MockFrames(), $"State stays On after the hardware stopped: {cam.State}");
+        Check(!HardwareOpen(), "hardware camera released");
+        Check(Math.Abs(cam.PreviewScale - 1f) < 0.001f, string.Create(CultureInfo.InvariantCulture, $"PreviewScale after the switch {cam.PreviewScale:0.000}"));
+
+        cam.ProcessPreview = original;
+        cam.RawFrameProbe = null;
+        result.Append(string.Create(CultureInfo.InvariantCulture, $" mode=mock fps={fps:0.0} failures={fails.Count}"));
+        if (fails.Count > 0)
+            result.Append($" failed=\"{string.Join("; ", fails)}\"");
+        return fails.Count == 0 ? 0 : 1;
     }
 
     /// <summary>

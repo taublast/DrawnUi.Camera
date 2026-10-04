@@ -1892,6 +1892,8 @@ public partial class SkiaCamera
 
         try
         {
+            ThrowIfMockSource();
+
             // State 1 -> State 2: If pre-recording enabled and not yet in pre-recording phase, start memory-only recording
             if (EnablePreRecording && !IsPreRecording && !IsRecording)
             {

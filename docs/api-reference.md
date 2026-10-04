@@ -60,6 +60,9 @@ public bool TryMapPreviewPoint(SKPoint normalized, out SKPoint pixels)  // Previ
 // Passkey sign-in codes ("FIDO:/..." QR shown by a site)
 public static bool IsPasskeySignInSupported { get; }  // System can take such a code (currently iOS 16+)
 public static Task<bool> StartPasskeySignInAsync(DetectedCode code)  // Hands the code to the system; call from a tap
+
+// Mock Source (a still image instead of the hardware camera)
+public SKImage MockSource { get; set; }           // Set: hardware off, the image is the live frame; null: the camera (default)
 ```
 
 ## Core Methods
@@ -128,6 +131,30 @@ protected internal virtual void OnRawFrameAvailable(RawCameraFrame frame)
 `RenderCapturedPhotoAsync(..., drawOverlay: ...)` lets you reuse existing `ProcessFrame` or `ProcessPreview`-style `Action<DrawableFrame>` code on a captured still photo. `drawOverlay` runs after the still image is rendered and before any optional `SkiaLayout` overlay is rendered. For rotated stills, the callback is replayed in capture-time viewport orientation so reused overlay code sees the expected callback space.
 
 `RenderCapturedPhotoAsync(..., composeBase: ...)` adds a canvas-stage hook for still-photo composition before `drawOverlay` runs. Existing compatibility overloads keep the legacy direct-render path and do not allocate or execute this extra stage unless the new overload is selected.
+
+## Mock Source
+
+`MockSource` replaces the hardware camera with a still image: for store screenshots, demos, the iOS Simulator (no camera) and tests.
+
+```csharp
+using var stream = await FileSystem.OpenAppPackageFileAsync("mock.jpg");
+camera.MockSource = SKImage.FromEncodedData(stream);   // before or after IsOn = true
+camera.MockSource = null;                              // back to the camera
+```
+
+While it is set:
+
+- The hardware camera is not started and the camera permission is not requested (the other `NeedPermissionsSet` flags still are). `State` goes `On` as usual.
+- The image is delivered as the live frame about 30 times per second through the camera frame path: `RenderPreviewForProcessing` overrides and shaders, `ProcessPreview`, `NewPreviewSet`, `OnRawFrameAvailable` with `frame.TryGetRgba(...)`. It is shown upright and fills the preview with the control's `Aspect`, like a camera frame of the image's size. `PreviewScale` is 1.
+- `Facing`, format and capture-mode changes restart it like the camera; `Zoom` zooms the preview as usual.
+- `TakePicture()` raises `CaptureSuccess` with the image itself as `CapturedImage.Image` (`Meta` from `CreateMetadata()` with `Orientation = 1`, `Rotation = 0`, `DeviceRotation = 0`: the photo is the image as shown, device rotation is not applied). `RenderCapturedPhotoAsync` and `SaveToGalleryAsync` work unchanged.
+- Video recording is not available: `StartVideoRecording()` raises `RecordingFailed` and throws `NotSupportedException`. Audio-only recording (`EnableVideoRecording = false`) still works. Do not set or clear `MockSource` during a recording.
+
+Setting it while the camera is on stops the hardware; clearing it while `IsOn` starts the hardware with the usual permission check. Swapping one image for another just changes the frames.
+
+The pixels are copied when the property is set and the caller keeps owning the image. Use a raster or encoded image (`SKImage.FromEncodedData`); a GPU texture image cannot be read and is ignored (logged). `SKImage.FromEncodedData` does not apply EXIF orientation, so use pixels that are already upright. A camera-sized image (up to about 12 MP) keeps memory reasonable: the image lives once in RAM and once as a GPU texture.
+
+When `MockSource` is null nothing of this runs: no timer, only a null check per frame.
 
 ## Events
 

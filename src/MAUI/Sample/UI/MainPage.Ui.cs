@@ -815,6 +815,20 @@ namespace CameraTests.Views
                                         : Color.FromArgb("#6B7280");
                                 }),
 
+                            new SettingsButton(IconFont.Image, "Mock: OFF")
+                                {
+                                    TintColor = Color.FromArgb("#6B7280"),
+                                    IconColor = Color.FromArgb("#F472B6"),
+                                }
+                                .OnTapped(async me => { await ToggleMockSource(); })
+                                .ObserveProperty(CameraControl, nameof(CameraControl.MockSource), me =>
+                                {
+                                    me.Text = CameraControl.MockSource != null ? "Mock: ON" : "Mock: OFF";
+                                    me.TintColor = CameraControl.MockSource != null
+                                        ? Color.FromArgb("#DB2777")
+                                        : Color.FromArgb("#6B7280");
+                                }),
+
                             new SettingsButton(IconFont.CameraIris, "Mode") { TintColor = Color.FromArgb("#0891B2"), IconColor = Color.FromArgb("#38BDF8"), }
                                 .OnTapped(me => { ToggleCaptureMode(); })
                                 .ObserveProperty(CameraControl, nameof(CameraControl.CaptureMode), me =>

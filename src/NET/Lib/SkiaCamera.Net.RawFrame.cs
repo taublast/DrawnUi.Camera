@@ -116,39 +116,6 @@ public partial class SkiaCamera : SkiaControl
     private partial bool TryGetRgbaCore(SKImage? rawImage, int targetWidth, int targetHeight, byte[] outputBuffer,
         int outputRotation, float cropRatio)
     {
-        if (rawImage == null)
-            return false;
-
-        var info = new SKImageInfo(targetWidth, targetHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
-
-        using var surface = SKSurface.Create(info);
-        if (surface == null)
-            return false;
-
-        using var paint = new SKPaint();
-        var sampling = SkiaSamplingOptions.GetSamplingOptions(FilterQuality.Low);
-        GetDrawSizeForOutputRotation(targetWidth, targetHeight, outputRotation, out int drawWidth, out int drawHeight);
-        var src = GetCenterCropSourceRect(rawImage.Width, rawImage.Height, drawWidth, drawHeight, cropRatio);
-
-        surface.Canvas.Clear(SKColors.Transparent);
-        surface.Canvas.Save();
-        ApplyCanvasOutputRotation(surface.Canvas, targetWidth, targetHeight, outputRotation);
-        surface.Canvas.DrawImage(rawImage, src, new SKRect(0, 0, drawWidth, drawHeight), sampling, paint);
-        surface.Canvas.Restore();
-        surface.Canvas.Flush();
-
-        using var snapshot = surface.Snapshot();
-        if (snapshot == null)
-            return false;
-
-        var handle = System.Runtime.InteropServices.GCHandle.Alloc(outputBuffer, System.Runtime.InteropServices.GCHandleType.Pinned);
-        try
-        {
-            return snapshot.ReadPixels(info, handle.AddrOfPinnedObject(), targetWidth * 4, 0, 0);
-        }
-        finally
-        {
-            handle.Free();
-        }
+        return TryGetRgbaOnCpu(rawImage, targetWidth, targetHeight, outputBuffer, outputRotation, cropRatio);
     }
 }

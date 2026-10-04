@@ -38,6 +38,7 @@ namespace DrawnUi.Camera;
     /// the live camera feed. Works on every platform (incl. the headless pure-.NET build) — this
     /// is the supported way to set your own image as the camera source, e.g. for testing or mocking.
     /// Ownership transfers: the frame will be disposed once consumed.
+    /// On the MAUI platforms it replaces one frame only; to replace the camera with a still image use MockSource.
     /// </summary>
     public void InjectFrame(SKImage frame)
     {
@@ -85,7 +86,24 @@ namespace DrawnUi.Camera;
         typeof(HardwareState),
         typeof(SkiaCamera),
         HardwareState.Off,
-        BindingMode.OneWayToSource, propertyChanged: ControlStateChanged);
+        BindingMode.OneWayToSource, propertyChanged: ControlStateChanged, coerceValue: CoerceState);
+
+    private static object CoerceState(BindableObject bindable, object value)
+    {
+        if (bindable is SkiaCamera control)
+        {
+            var state = (HardwareState)value;
+            control.CoerceStateCore(ref state);
+            return state;
+        }
+
+        return value;
+    }
+
+    /// <summary>
+    /// Flavor hook to correct a new State value before it is applied (the MAUI mock source keeps it On).
+    /// </summary>
+    partial void CoerceStateCore(ref HardwareState state);
 
     private static void ControlStateChanged(BindableObject bindable, object oldvalue, object newvalue)
     {

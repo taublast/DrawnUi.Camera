@@ -1171,6 +1171,9 @@ public partial class SkiaCamera : SkiaControl
     protected void UpdatePreviewScaleFromFormat()
     {
 #if ONPLATFORM
+        if (_mockBitmap != null)
+            return; // no video format: the mock image size is the source size
+
         try
         {
             var format = NativeControl?.GetCurrentVideoFormat();
@@ -1879,7 +1882,10 @@ public partial class SkiaCamera : SkiaControl
             try
             {
                 Debug.WriteLine("[SkiaCamera] Requesting permissions...");
-                CheckPermissions((presented) =>
+                var request = NeedPermissionsSet;
+                if (_mockBitmap != null)
+                    request &= ~NeedPermissions.Camera; // a mock source needs no camera
+                CheckPermissions(() =>
                     {
                         Debug.WriteLine("[SkiaCamera] Starting..");
                         PermissionsWarning = false;
@@ -1887,14 +1893,14 @@ public partial class SkiaCamera : SkiaControl
                         OnPermissionsResultChanged(true);
                         StartInternal();
                     },
-                    (presented) =>
+                    () =>
                     {
                         Super.Log("[SkiaCamera] Permissions denied");
                         IsOn = false;
                         PermissionsWarning = true;
                         PermissionsError = true;
                         OnPermissionsResultChanged(false);
-                    });
+                    }, request);
             }
             catch (Exception e)
             {
@@ -1927,6 +1933,12 @@ public partial class SkiaCamera : SkiaControl
             return;
 
 #if ONPLATFORM
+        if (_mockBitmap != null)
+        {
+            StartMockFrames();
+            return;
+        }
+
         DisableOtherCameras();
 
         // Initialize camera hardware if needed for video recording OR preview
@@ -2118,6 +2130,8 @@ public partial class SkiaCamera : SkiaControl
         {
             StopInternal(true);
         }
+
+        DisposeMockSource();
 
         // Clean up restart debounce timer
         _restartDebounceTimer?.Dispose();
@@ -2492,6 +2506,13 @@ public partial class SkiaCamera : SkiaControl
         Debug.WriteLine($"[TakePicture] IsMainThread {MainThread.IsMainThread}");
 
         IsBusy = true;
+
+        if (_mockBitmap != null)
+        {
+            await MainThread.InvokeOnMainThreadAsync(TakeMockPicture);
+            IsBusy = false;
+            return;
+        }
 
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -3612,6 +3633,9 @@ public partial class SkiaCamera : SkiaControl
             return injected;
         }
 
+        if (_mockBitmap != null)
+            return AquireMockFrame();
+
         // When UseRecordingFramesForPreview=false, we want raw ImageReader preview (don't suppress)
 
 #if WINDOWS
@@ -4497,6 +4521,8 @@ public partial class SkiaCamera : SkiaControl
         System.Diagnostics.Debug.WriteLine($"[CAMERA] Stopping {Uid} {Tag}");
 
         //_ = StopVideoRecording(true);
+
+        StopMockFrames();
 
         NativeControl?.Stop(force);
 

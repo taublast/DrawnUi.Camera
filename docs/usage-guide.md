@@ -20,6 +20,7 @@
 | 14 | [Permission Handling](#14-permission-handling) | `NeedPermissions` flags, `CheckPermissions()`, async helpers |
 | 15 | [Complete MVVM Example](#15-complete-mvvm-example) | Full ViewModel + Page example |
 | 16 | [Code Detection](#16-code-detection-qr-and-barcodes) | QR codes and barcodes in the live preview, `CodesDetected`, mapping to the screen |
+| 17 | [Mock Source](#17-mock-source-a-still-image-instead-of-the-camera) | `MockSource`: a still image as the live camera feed, for screenshots, simulators and tests |
 
 ## 1. Declaration / Setup
 
@@ -1063,3 +1064,36 @@ async void OnPasskeyTapped(DetectedCode code)
 
 Start it only from a user action such as a tap, never by itself when the code is detected. The code
 is short-lived: the site replaces it after a while, so use the one detected last.
+
+## 17. Mock Source (a still image instead of the camera)
+
+Set `MockSource` to show a still image as the live camera feed: store screenshots, demos, the iOS
+Simulator (it has no camera), automated tests. The hardware camera stays off and the camera
+permission is not requested, but everything after the camera behaves as usual: `State` goes `On`,
+your preview shaders, `ProcessPreview`, `NewPreviewSet` and `OnRawFrameAvailable` receive the
+image about 30 times per second, and `TakePicture()` returns it through `CaptureSuccess`.
+
+```csharp
+// a debug menu item
+async Task ToggleMockSource()
+{
+    if (CameraControl.MockSource != null)
+    {
+        CameraControl.MockSource = null;   // back to the camera
+        return;
+    }
+
+    using var stream = await FileSystem.OpenAppPackageFileAsync("Images/model.jpg");
+    CameraControl.MockSource = SKImage.FromEncodedData(stream);
+}
+```
+
+- Set it before or after `IsOn = true`. Setting it while the camera runs stops the hardware;
+  clearing it starts the hardware again.
+- The photo from `TakePicture()` is the image as shown (`Rotation = 0`, `DeviceRotation = 0`, `Meta.Orientation = 1`).
+  Render your filter into it with `RenderCapturedPhotoAsync` and save it with `SaveToGalleryAsync` as usual.
+- Video recording is not available while it is set: `StartVideoRecording()` fails with `NotSupportedException`.
+- The pixels are copied when set; you keep owning the image. Use upright pixels: `SKImage.FromEncodedData` ignores EXIF orientation.
+- When `MockSource` is null there is no cost: no timer, a null check per frame.
+
+The sample app has a "Mock" button in its settings drawer. Full contract: [API Reference, Mock Source](api-reference.md#mock-source).

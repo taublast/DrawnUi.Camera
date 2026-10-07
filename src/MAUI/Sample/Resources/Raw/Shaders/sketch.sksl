@@ -1,0 +1,62 @@
+uniform float4 iMouse;
+uniform float  iTime;
+uniform float2 iResolution;
+uniform float2 iImageResolution;
+uniform shader iImage1;
+uniform float2 iOffset;
+
+// pixel independent, width is in points!
+
+const float iLineWidth = 4.5;
+const float eraseNoise = 1.045;
+const float contrast = 9.0;
+const float DETAIL_THRESHOLD = 0.05; // how much darker than its surroundings a detail must be to get a line (skips wrinkles, skin texture)
+
+// Color dodge blend mode
+half3 colorDodge(in half3 src, in half3 dst) {
+    return step(0.0, dst) * mix(min(half3(1.0), dst / (1.0 - src)), half3(1.0), step(1.0, src));
+}
+
+// Converts color to grayscale
+float greyScale(in half3 col) {
+    return dot(col, half3(0.3, 0.59, 0.11));
+}
+
+// Main fragment shader for continuous sketch lines effect with size-independent line width
+half4 main(float2 fragCoord) {
+    // Reference resolution for consistent line width (adjust as needed)
+    float REFERENCE_SIZE = 1000.0;
+
+    float2 renderingScale = iImageResolution.xy / iResolution.xy;
+    float2 inputCoord = (fragCoord - iOffset) * renderingScale;
+
+    // Calculate scale factor for size-independent line width
+    float imageSize = min(iImageResolution.x, iImageResolution.y);
+    float scaleFactor = imageSize / REFERENCE_SIZE;
+
+    half3 col = iImage1.eval(inputCoord).rgb;
+
+    half3 blurred = half3(0.0);
+    float totalWeight = 0.0;
+
+    for (int i = -2; i <= 2; i++) {
+        for (int j = -2; j <= 2; j++) {
+            float weight = exp(-float(i*i + j*j) * 0.2);
+            float2 sampleCoord = inputCoord + float2(float(i), float(j)) * 1.5 * scaleFactor * iLineWidth;
+            blurred += iImage1.eval(sampleCoord).rgb * weight;
+            totalWeight += weight;
+        }
+    }
+    blurred = blurred / totalWeight;
+
+    half3 inv = half3(1.0) - blurred;
+    half3 lighten = colorDodge(col, inv) * eraseNoise;
+    half3 res = half3(greyScale(lighten));
+
+    res = half3(pow(res.x, contrast));
+
+    // faint details get no line: the pixel must be clearly darker than its surroundings
+    res = half3(mix(1.0, res.x, smoothstep(DETAIL_THRESHOLD, DETAIL_THRESHOLD * 1.5, greyScale(blurred) - greyScale(col))));
+
+    return half4(res, 1.0);
+}

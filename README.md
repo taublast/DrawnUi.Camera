@@ -28,14 +28,16 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.11
+## What's New  1.10.7.31
 
- * Built on DrawnUi 1.10.7.1 (`DrawnUi.Maui` / `DrawnUi.Net`).
- * MAUI: you can now set an image instead of the real camera source: put it in `MockSource`. The real camera stays off and no camera permission is asked, while preview shaders, frame processing and taking photos work with your image as if it came from the camera. Video recording is not available while an image is set. See the [Usage Guide](docs/usage-guide.md#17-mock-source-a-still-image-instead-of-the-camera).
- * iOS: on iOS 26, taking a photo with stabilization on no longer throws and logs an error on every capture.
+ * Built on DrawnUi 1.10.7.3 (`DrawnUi.Maui` / `DrawnUi.Net`).
+ * iOS: recording no longer keeps the audio in memory until it stops.
+ * iOS: the preview scaler releases its GPU command buffers every frame, so memory stays flat while the camera is on.
 
 ## Previously 
 
+ * MAUI: you can now set an image instead of the real camera source: put it in `MockSource`. The real camera stays off and no camera permission is asked, while preview shaders, frame processing and taking photos work with your image as if it came from the camera. Video recording is not available while an image is set. See the [Usage Guide](docs/usage-guide.md#17-mock-source-a-still-image-instead-of-the-camera).
+ * iOS: on iOS 26, taking a photo with stabilization on no longer throws and logs an error on every capture.
  * iOS: passkey sign-in codes. A site that offers "sign in with a passkey on another device" shows a QR code; `DetectedCode.IsPasskeySignIn` recognizes it, and `SkiaCamera.StartPasskeySignInAsync(code)` hands it to the system, which shows its own passkey sheet and signs the user in. Your app never sees a key. Call it from a tap. `SkiaCamera.IsPasskeySignInSupported` tells whether the system can take the code: iOS 16 and later for now. See the [Usage Guide](docs/usage-guide.md#passkey-sign-in-codes).
  * iOS: the camera finds QR codes and barcodes in the live preview. Set `CodeDetection` (for example `CameraCodeTypes.Qr`) and listen to `CodesDetected`: every code comes with its text and its corners, and `TryMapPreviewPoint` turns a corner into a position on the canvas. The system's capture pipeline does the detection, so your code reads no frame pixels for it and nothing is added to the render thread. Off by default, and off costs nothing. `SkiaCamera.IsCodeDetectionSupported` tells whether the platform can do it: iOS for now. See the [Usage Guide](docs/usage-guide.md#16-code-detection-qr-and-barcodes).
  * Windows: the camera preview and video recording now run on the GPU (`UseGpuProcessing`, on by default). Frames reach the screen and the encoder without a CPU copy, hardware video encoders are used, and CPU use drops. When the machine can't do it (another GPU, a driver refusing the device) the camera falls back to the previous path by itself, never a black preview. A camera switched on before its canvas first draws still gets the GPU path, and each camera frame takes less work, with its Direct3D surface released right after use.
@@ -46,8 +48,6 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * Windows: switching the camera off hands the device back, so the webcam light and privacy indicator go off and other apps can use it. A running recording keeps the device.
  * iOS: saved photos keep their metadata. Photos showed "No camera information" and "No lens information" because iOS re-serialized the EXIF while importing raw data and dropped every value stored out of line - make, model, lens make and model, exposure time, aperture, focal length. The asset now goes to Photos as a file, which it stores byte for byte. EXIF, TIFF and GPS are written with ImageIO (`AppleJpegMetadata`) instead of the hand-built segment in `JpegExifInjector`, which stays as fallback and on other platforms. The compressed image is copied from the source, so nothing is re-encoded and quality is unchanged.
  * iOS: fixed a crash when recording started while preview audio was still starting, e.g. record tapped right after switching `CaptureMode` to Video. Stopping preview audio disposed the `AVAudioEngine` under its running setup (`EXC_BAD_ACCESS` in `outputFormatForBus:`). `AudioCaptureApple` now serializes engine setup and cleanup, and a preview audio start that was stopped meanwhile gives up instead of leaving an engine running.
- * iOS: selfie video mirroring follows `MirrorSavedSelfiePhoto` like the still. The encoder always mirrored front-camera frames, so with `MirrorSavedSelfiePhoto=true` a clip came out flipped against the screen. Applies to the GPU processing path (`CaptureFrameCore`, zero-copy and CPU fallback) and to the native `AVCaptureMovieFileOutput` connection (`VideoMirrored`). While encoder frames feed the preview the display flip is inverted for that time, so the screen looks the same before, during and after recording.
- * Android: video recording uses audio mode again.
 
 ## Extending SkiaCamera
 

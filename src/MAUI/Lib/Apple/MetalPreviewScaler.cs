@@ -323,8 +323,12 @@ namespace DrawnUi.Camera
                 }
 
                 // Create command buffer
-                var commandBuffer = _commandQueue.CommandBuffer();
-                var computeEncoder = commandBuffer.ComputeCommandEncoder;
+                // Disposed at the end of the call (after Commit): the managed wrappers hold their own reference
+                // to the native command buffer and encoders, which the autorelease pool does not drop. Left
+                // to the GC they piled up at ~50 command buffers a second (Allocations, 2026-10-08). Metal keeps
+                // a committed buffer alive by itself until it completes; the completed handler needs no wrapper.
+                using var commandBuffer = _commandQueue.CommandBuffer();
+                using var computeEncoder = commandBuffer.ComputeCommandEncoder;
 
                 // Set pipeline and textures
                 computeEncoder.SetComputePipelineState(_scalePipeline);
@@ -424,8 +428,12 @@ namespace DrawnUi.Camera
                 int readSlot = 1 - writeSlot;
 
                 // --- GPU WORK: dispatch compute shader writing to writeSlot ---
-                var commandBuffer = _commandQueue.CommandBuffer();
-                var computeEncoder = commandBuffer.ComputeCommandEncoder;
+                // Disposed at the end of the call (after Commit): the managed wrappers hold their own reference
+                // to the native command buffer and encoders, which the autorelease pool does not drop. Left
+                // to the GC they piled up at ~50 command buffers a second (Allocations, 2026-10-08). Metal keeps
+                // a committed buffer alive by itself until it completes; the completed handler needs no wrapper.
+                using var commandBuffer = _commandQueue.CommandBuffer();
+                using var computeEncoder = commandBuffer.ComputeCommandEncoder;
 
                 computeEncoder.SetComputePipelineState(_scalePipeline);
                 computeEncoder.SetTexture(inputTexture, 0);
@@ -454,7 +462,7 @@ namespace DrawnUi.Camera
 
                 // Blit GPU texture → pinned CPU buffer inside the same command buffer
                 // so the readback happens on GPU timeline with no CPU wait.
-                var blitEncoder = commandBuffer.BlitCommandEncoder;
+                using var blitEncoder = commandBuffer.BlitCommandEncoder;
                 bytesPerRow = _outputWidth * 4;
                 var region = new MTLRegion
                 {
@@ -552,8 +560,12 @@ namespace DrawnUi.Camera
                 int slot = _gpuRingWriteIdx;
                 var target = _gpuRingTextures[slot];
 
-                var commandBuffer = _commandQueue.CommandBuffer();
-                var computeEncoder = commandBuffer.ComputeCommandEncoder;
+                // Disposed at the end of the call (after Commit): the managed wrappers hold their own reference
+                // to the native command buffer and encoders, which the autorelease pool does not drop. Left
+                // to the GC they piled up at ~50 command buffers a second (Allocations, 2026-10-08). Metal keeps
+                // a committed buffer alive by itself until it completes; the completed handler needs no wrapper.
+                using var commandBuffer = _commandQueue.CommandBuffer();
+                using var computeEncoder = commandBuffer.ComputeCommandEncoder;
 
                 computeEncoder.SetComputePipelineState(_scalePipeline);
                 computeEncoder.SetTexture(inputTexture, 0);

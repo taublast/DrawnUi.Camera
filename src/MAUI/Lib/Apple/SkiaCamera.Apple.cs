@@ -67,7 +67,6 @@ public partial class SkiaCamera
     private string _liveAudioFilePath;
     private long _liveAudioFirstTimestampNs = -1;
     private readonly object _liveAudioWriterLock = new object();
-    private List<IntPtr> _liveAudioMemoryToFree;  // Memory to free after writer finishes
     private bool _liveAudioWriterPreAllocated;  // True if writer is created but not yet started
     private string _liveVideoWriterWarmupSignature;
     private Task _liveVideoWriterWarmupTask;
@@ -316,7 +315,6 @@ public partial class SkiaCamera
                 // Mark as pre-allocated but NOT started
                 _liveAudioWriterPreAllocated = true;
                 _liveAudioFirstTimestampNs = -1;
-                _liveAudioMemoryToFree = new List<IntPtr>();
 
                 Debug.WriteLine($"[EnsureLiveAudioWriterPreAllocated] Pre-allocated writer for: {_liveAudioFilePath}");
             }
@@ -3048,9 +3046,6 @@ public partial class SkiaCamera
             return null;
         }
 
-        // Declare memory tracker outside try block so we can clean up on exceptions
-        var memoryToFree = new List<IntPtr>();
-
         try
         {
             // Delete existing file
@@ -3105,17 +3100,14 @@ public partial class SkiaCamera
 
             Debug.WriteLine($"[WriteAudioSamplesToM4A] Writing {samples.Length} audio samples, first timestamp: {firstTimestampNs / 1_000_000_000.0:F3}s");
 
-            // Write all samples
-            // CRITICAL: CMBlockBuffer does NOT copy data, so we track memory in memoryToFree for deferred cleanup
+            // Write all samples; each sample buffer owns a copy of its audio (CreateCMSampleBufferFromAudio)
             foreach (var sample in samples)
             {
                 // Normalize timestamp relative to session start
                 long normalizedNs = sample.TimestampNs - firstTimestampNs;
                 if (normalizedNs < 0) normalizedNs = 0;
 
-                // Create CMSampleBuffer from audio sample - memory is tracked for deferred cleanup
-                IntPtr memoryPtr;
-                using var cmSampleBuffer = CreateCMSampleBufferFromAudio(sample, normalizedNs, out memoryPtr);
+                using var cmSampleBuffer = CreateCMSampleBufferFromAudio(sample, normalizedNs);
                 if (cmSampleBuffer == null)
                 {
                     failedCount++;
@@ -3135,30 +3127,15 @@ public partial class SkiaCamera
                     if (audioInput.AppendSampleBuffer(cmSampleBuffer))
                     {
                         writtenCount++;
-                        // Track memory for cleanup after writer finishes
-                        if (memoryPtr != IntPtr.Zero)
-                        {
-                            memoryToFree.Add(memoryPtr);
-                        }
                     }
                     else
                     {
                         failedCount++;
-                        // Free immediately on append failure
-                        if (memoryPtr != IntPtr.Zero)
-                        {
-                            System.Runtime.InteropServices.Marshal.FreeHGlobal(memoryPtr);
-                        }
                     }
                 }
                 else
                 {
                     failedCount++;
-                    // Free immediately if not appended
-                    if (memoryPtr != IntPtr.Zero)
-                    {
-                        System.Runtime.InteropServices.Marshal.FreeHGlobal(memoryPtr);
-                    }
                 }
             }
 
@@ -3177,18 +3154,6 @@ public partial class SkiaCamera
             var error = writer.Error;
             writer.Dispose();
 
-            // NOW it's safe to free all tracked memory - writer has finished consuming the data
-            int freedCount = memoryToFree.Count;
-            foreach (var ptr in memoryToFree)
-            {
-                if (ptr != IntPtr.Zero)
-                {
-                    System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-                }
-            }
-            memoryToFree.Clear();
-            Debug.WriteLine($"[WriteAudioSamplesToM4A] Freed {freedCount} memory allocations");
-
             if (status == AVAssetWriterStatus.Completed && File.Exists(outputPath))
             {
                 var fileSize = new FileInfo(outputPath).Length;
@@ -3204,24 +3169,6 @@ public partial class SkiaCamera
         catch (Exception ex)
         {
             Debug.WriteLine($"[WriteAudioSamplesToM4A] Exception: {ex.Message}");
-
-            // CRITICAL: Free all tracked memory on exception to prevent memory leaks
-            foreach (var ptr in memoryToFree)
-            {
-                if (ptr != IntPtr.Zero)
-                {
-                    try
-                    {
-                        System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-                    }
-                    catch
-                    {
-                        // Ignore errors during cleanup
-                    }
-                }
-            }
-            memoryToFree.Clear();
-
             return null;
         }
     }
@@ -3319,7 +3266,6 @@ public partial class SkiaCamera
 
                 _liveAudioWriterPreAllocated = false;  // Actively writing, not just pre-allocated
                 _liveAudioFirstTimestampNs = -1;  // Will be set on first sample
-                _liveAudioMemoryToFree = new List<IntPtr>();
 
                 Debug.WriteLine($"[StartLiveAudioWriter] Started streaming to: {_liveAudioFilePath}");
                 return true;
@@ -3359,45 +3305,18 @@ public partial class SkiaCamera
                 long normalizedNs = sample.TimestampNs - _liveAudioFirstTimestampNs;
                 if (normalizedNs < 0) normalizedNs = 0;
 
-                // Create CMSampleBuffer from audio sample
-                IntPtr memoryPtr;
-                using var cmSampleBuffer = CreateCMSampleBufferFromAudio(sample, normalizedNs, out memoryPtr);
+                // The sample buffer owns a copy of the audio: released with it once the writer is done,
+                // so nothing accumulates for the length of the clip
+                using var cmSampleBuffer = CreateCMSampleBufferFromAudio(sample, normalizedNs);
                 if (cmSampleBuffer == null)
                 {
-                    if (memoryPtr != IntPtr.Zero)
-                    {
-                        System.Runtime.InteropServices.Marshal.FreeHGlobal(memoryPtr);
-                    }
                     return;
                 }
 
                 // Append to writer if ready (drop if not - real-time streaming)
                 if (_liveAudioInput.ReadyForMoreMediaData)
                 {
-                    if (_liveAudioInput.AppendSampleBuffer(cmSampleBuffer))
-                    {
-                        // Track memory for cleanup after writer finishes
-                        if (memoryPtr != IntPtr.Zero)
-                        {
-                            _liveAudioMemoryToFree?.Add(memoryPtr);
-                        }
-                    }
-                    else
-                    {
-                        // Free immediately on append failure
-                        if (memoryPtr != IntPtr.Zero)
-                        {
-                            System.Runtime.InteropServices.Marshal.FreeHGlobal(memoryPtr);
-                        }
-                    }
-                }
-                else
-                {
-                    // Writer not ready - drop sample and free memory immediately
-                    if (memoryPtr != IntPtr.Zero)
-                    {
-                        System.Runtime.InteropServices.Marshal.FreeHGlobal(memoryPtr);
-                    }
+                    _liveAudioInput.AppendSampleBuffer(cmSampleBuffer);
                 }
             }
             catch (Exception ex)
@@ -3416,20 +3335,17 @@ public partial class SkiaCamera
         AVAssetWriter writer;
         AVAssetWriterInput input;
         string filePath;
-        List<IntPtr> memoryToFree;
 
         lock (_liveAudioWriterLock)
         {
             writer = _liveAudioWriter;
             input = _liveAudioInput;
             filePath = _liveAudioFilePath;
-            memoryToFree = _liveAudioMemoryToFree;
 
             // Clear references immediately to prevent new writes
             _liveAudioWriter = null;
             _liveAudioInput = null;
             _liveAudioFilePath = null;
-            _liveAudioMemoryToFree = null;
             _liveAudioFirstTimestampNs = -1;
         }
 
@@ -3459,27 +3375,6 @@ public partial class SkiaCamera
             input?.Dispose();
             writer.Dispose();
 
-            // NOW it's safe to free all tracked memory
-            if (memoryToFree != null)
-            {
-                int freedCount = memoryToFree.Count;
-                foreach (var ptr in memoryToFree)
-                {
-                    if (ptr != IntPtr.Zero)
-                    {
-                        try
-                        {
-                            System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr);
-                        }
-                        catch
-                        {
-                            // Ignore cleanup errors
-                        }
-                    }
-                }
-                Debug.WriteLine($"[StopLiveAudioWriter] Freed {freedCount} memory allocations");
-            }
-
             if (status == AVAssetWriterStatus.Completed && File.Exists(filePath))
             {
                 var fileSize = new FileInfo(filePath).Length;
@@ -3495,19 +3390,6 @@ public partial class SkiaCamera
         catch (Exception ex)
         {
             Debug.WriteLine($"[StopLiveAudioWriter] Exception: {ex.Message}");
-
-            // Clean up memory on exception
-            if (memoryToFree != null)
-            {
-                foreach (var ptr in memoryToFree)
-                {
-                    if (ptr != IntPtr.Zero)
-                    {
-                        try { System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr); } catch { }
-                    }
-                }
-            }
-
             return null;
         }
     }
@@ -3524,19 +3406,6 @@ public partial class SkiaCamera
         _liveAudioFilePath = null;
         _liveAudioFirstTimestampNs = -1;
         _liveAudioWriterPreAllocated = false;
-
-        // Free any tracked memory
-        if (_liveAudioMemoryToFree != null)
-        {
-            foreach (var ptr in _liveAudioMemoryToFree)
-            {
-                if (ptr != IntPtr.Zero)
-                {
-                    try { System.Runtime.InteropServices.Marshal.FreeHGlobal(ptr); } catch { }
-                }
-            }
-            _liveAudioMemoryToFree = null;
-        }
     }
 
     /// <summary>
@@ -3650,16 +3519,15 @@ public partial class SkiaCamera
     }
 
     /// <summary>
-    /// Creates a CMSampleBuffer from an AudioSample with the specified timestamp.
-    /// IMPORTANT: The caller must track and free the returned memoryPtr AFTER AppendSampleBuffer completes,
-    /// because CMBlockBuffer does NOT copy the data - it just references it.
+    /// Creates a CMSampleBuffer from an AudioSample with the specified timestamp. The block buffer allocates
+    /// and owns a copy of the audio, so it is freed together with the sample buffer once the writer is done
+    /// with it: nothing for the caller to track or free. (It used to reference AllocHGlobal memory the callers
+    /// kept in a list until the writer finished, ~6 MB a minute held for the whole clip.)
     /// </summary>
     /// <param name="sample">The audio sample to convert</param>
     /// <param name="timestampNs">Timestamp in nanoseconds</param>
-    /// <param name="memoryPtr">Output: The unmanaged memory pointer that must be freed by caller after use</param>
-    private CoreMedia.CMSampleBuffer CreateCMSampleBufferFromAudio(AudioSample sample, long timestampNs, out IntPtr memoryPtr)
+    private CoreMedia.CMSampleBuffer CreateCMSampleBufferFromAudio(AudioSample sample, long timestampNs)
     {
-        memoryPtr = IntPtr.Zero;
         try
         {
             int bytesPerSample = sample.BitDepth == AudioBitDepth.Pcm8Bit ? 1 :
@@ -3705,14 +3573,10 @@ public partial class SkiaCamera
 
             using var formatDesc = CoreMedia.CMFormatDescription.Create(formatDescPtr, true);
 
-            // Allocate unmanaged memory for audio data
-            // CRITICAL: Caller must free this AFTER AppendSampleBuffer completes!
-            memoryPtr = System.Runtime.InteropServices.Marshal.AllocHGlobal(sample.Data.Length);
-            System.Runtime.InteropServices.Marshal.Copy(sample.Data, 0, memoryPtr, sample.Data.Length);
-
-            // Create block buffer - NOTE: This does NOT copy the data, just references memoryPtr!
+            // No memory block passed: CoreMedia allocates the block itself (default allocator) and frees it
+            // when the block buffer is released, then the audio is copied in
             using var blockBuffer = CoreMedia.CMBlockBuffer.FromMemoryBlock(
-                memoryPtr,
+                IntPtr.Zero,
                 (nuint)sample.Data.Length,
                 null,
                 0,
@@ -3722,9 +3586,16 @@ public partial class SkiaCamera
 
             if (blockBuffer == null || blockErr != CoreMedia.CMBlockBufferError.None)
             {
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(memoryPtr);
-                memoryPtr = IntPtr.Zero;
                 return null;
+            }
+
+            unsafe
+            {
+                fixed (byte* data = sample.Data)
+                {
+                    if (blockBuffer.ReplaceDataBytes((IntPtr)data, 0, (nuint)sample.Data.Length) != CoreMedia.CMBlockBufferError.None)
+                        return null;
+                }
             }
 
             // Calculate presentation time
@@ -3750,18 +3621,11 @@ public partial class SkiaCamera
                 new nuint[] { (nuint)sample.Data.Length },
                 out var sbErr);
 
-            // DO NOT free memoryPtr here! Caller must free it after AppendSampleBuffer completes.
             return cmSampleBuffer;
         }
         catch (Exception ex)
         {
             Debug.WriteLine($"[CreateCMSampleBufferFromAudio] Error: {ex.Message}");
-            // Free memory on error
-            if (memoryPtr != IntPtr.Zero)
-            {
-                System.Runtime.InteropServices.Marshal.FreeHGlobal(memoryPtr);
-                memoryPtr = IntPtr.Zero;
-            }
             return null;
         }
     }

@@ -33,9 +33,6 @@ public class AudioOnlyEncoderApple : IAudioOnlyEncoder
     private long _firstTimestampNs = -1;
     private CMAudioFormatDescription _audioFormatDescription;
 
-    // Track memory allocations for cleanup
-    private readonly List<IntPtr> _memoryToFree = new();
-
     public bool IsRecording => _isRecording;
 
     public TimeSpan RecordingDuration
@@ -209,12 +206,11 @@ public class AudioOnlyEncoderApple : IAudioOnlyEncoder
                 _audioFormatDescription = (CMAudioFormatDescription)desc;
             }
 
-            var unmanagedPtr = Marshal.AllocHGlobal(sample.Data.Length);
-            _memoryToFree.Add(unmanagedPtr);
-            Marshal.Copy(sample.Data, 0, unmanagedPtr, sample.Data.Length);
-
-            var blockBuffer = CMBlockBuffer.FromMemoryBlock(
-                unmanagedPtr,
+            // No memory block passed: CoreMedia allocates and owns the block, freed with the sample buffer once
+            // the writer is done with it. (It used to reference AllocHGlobal memory kept in a list until stop:
+            // the whole recording's audio stayed in RAM.)
+            using var blockBuffer = CMBlockBuffer.FromMemoryBlock(
+                IntPtr.Zero,
                 (nuint)sample.Data.Length,
                 null,
                 0,
@@ -226,6 +222,15 @@ public class AudioOnlyEncoderApple : IAudioOnlyEncoder
             {
                 Debug.WriteLine($"[AudioOnlyEncoderApple] Failed to create block buffer: {blockStatus}");
                 return null;
+            }
+
+            unsafe
+            {
+                fixed (byte* data = sample.Data)
+                {
+                    if (blockBuffer.ReplaceDataBytes((IntPtr)data, 0, (nuint)sample.Data.Length) != CMBlockBufferError.None)
+                        return null;
+                }
             }
 
             // Make timestamps relative to first sample (absolute timestamps cause bogus duration)
@@ -280,13 +285,6 @@ public class AudioOnlyEncoderApple : IAudioOnlyEncoder
 
         await tcs.Task;
 
-        // Free allocated memory
-        foreach (var ptr in _memoryToFree)
-        {
-            try { Marshal.FreeHGlobal(ptr); } catch { }
-        }
-        _memoryToFree.Clear();
-
         var duration = DateTime.Now - _startTime;
         var fileInfo = File.Exists(_outputPath) ? new FileInfo(_outputPath) : null;
 
@@ -330,12 +328,6 @@ public class AudioOnlyEncoderApple : IAudioOnlyEncoder
 
     private void Cleanup()
     {
-        foreach (var ptr in _memoryToFree)
-        {
-            try { Marshal.FreeHGlobal(ptr); } catch { }
-        }
-        _memoryToFree.Clear();
-
         _audioInput?.Dispose();
         _audioInput = null;
         _writer?.Dispose();

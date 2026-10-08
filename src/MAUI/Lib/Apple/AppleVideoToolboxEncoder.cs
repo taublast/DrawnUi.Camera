@@ -117,7 +117,7 @@ namespace DrawnUi.Camera
             out IntPtr formatDescriptionOut
         );
 
-        private CMSampleBuffer CreateSampleBuffer(AudioSample sample, List<IntPtr> memoryTracker = null)
+        private CMSampleBuffer CreateSampleBuffer(AudioSample sample)
         {
             try
             {
@@ -182,40 +182,26 @@ namespace DrawnUi.Camera
                     _audioFormatDescription = (CMAudioFormatDescription)desc;
                 }
 
-                var unmanagedPtr = Marshal.AllocHGlobal(sample.Data.Length);
-                Marshal.Copy(sample.Data, 0, unmanagedPtr, sample.Data.Length);
-
-                // Track memory for deferred cleanup
-                if (memoryTracker != null)
-                {
-                    memoryTracker.Add(unmanagedPtr);
-                }
-
-                CMBlockBuffer blockBuffer = null;
-                try
-                {
-                    blockBuffer = CMBlockBuffer.FromMemoryBlock(
-                        unmanagedPtr,
-                        (nuint)sample.Data.Length,
-                        null,
-                        0,
-                        (nuint)sample.Data.Length,
-                        CMBlockBufferFlags.AssureMemoryNow,
-                        out var err);
-                }
-                catch
-                {
-                    // If tracker used, we must free it here or let finally handle it?
-                    // If we fail here, we should free it immediately if we can remove from tracker
-                    if (memoryTracker != null) memoryTracker.Remove(unmanagedPtr);
-                    Marshal.FreeHGlobal(unmanagedPtr);
+                // No memory block passed: CoreMedia allocates and owns the block, freed with the sample
+                // buffer once the writer is done with it, so callers have nothing to track or free
+                using var blockBuffer = CMBlockBuffer.FromMemoryBlock(
+                    IntPtr.Zero,
+                    (nuint)sample.Data.Length,
+                    null,
+                    0,
+                    (nuint)sample.Data.Length,
+                    CMBlockBufferFlags.AssureMemoryNow,
+                    out var err);
+                if (blockBuffer == null || err != CMBlockBufferError.None)
                     return null;
-                }
-                if (blockBuffer == null)
+
+                unsafe
                 {
-                    if (memoryTracker != null) memoryTracker.Remove(unmanagedPtr);
-                    Marshal.FreeHGlobal(unmanagedPtr);
-                    return null;
+                    fixed (byte* data = sample.Data)
+                    {
+                        if (blockBuffer.ReplaceDataBytes((IntPtr)data, 0, (nuint)sample.Data.Length) != CMBlockBufferError.None)
+                            return null;
+                    }
                 }
 
                 CMTime presentationTime = CMTime.FromSeconds((double)sample.TimestampNs / 1_000_000_000.0, 1000000000);
@@ -2036,9 +2022,6 @@ namespace DrawnUi.Camera
             // Use a temporary file to avoid conflicts with existing file
             var tempPath = Path.Combine(Path.GetDirectoryName(outputPath), $"temp_{Guid.NewGuid():N}.mp4");
 
-            // Memory tracking for audio samples (audio still needs per-sample allocation due to async processing)
-            var audioAllocatedPointers = new List<IntPtr>();
-
             AVAssetWriter writer = null;
             AVAssetWriterInput videoInput = null;
 
@@ -2363,7 +2346,7 @@ namespace DrawnUi.Camera
                         var sample = audioSamples[aIndex];
                         // Do NOT increment aIndex yet
 
-                        using var sBuf = CreateSampleBuffer(sample, audioAllocatedPointers);
+                        using var sBuf = CreateSampleBuffer(sample);
                         if (sBuf != null)
                         {
                             // Create timing relative to First Audio (starts at 0)
@@ -2541,13 +2524,6 @@ namespace DrawnUi.Camera
             {
                 videoInput?.Dispose();
                 writer?.Dispose();
-
-                // Free audio allocations (these still need per-sample allocation due to async writer)
-                foreach (var ptr in audioAllocatedPointers)
-                {
-                    Marshal.FreeHGlobal(ptr);
-                }
-                audioAllocatedPointers.Clear();
             }
         }
 

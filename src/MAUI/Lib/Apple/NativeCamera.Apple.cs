@@ -72,7 +72,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             // StopRunning/Dispose off the main queue, so offload the heavy native teardown.
             var session = _session;
             var videoDataOutput = _videoDataOutput;
-            var stillImageOutput = _stillImageOutput;
+            var photoOutput = _photoOutput;
             var deviceInput = _deviceInput;
             var videoDataOutputQueue = _videoDataOutputQueue;
             var metadataOutput = _metadataOutput;
@@ -84,7 +84,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                     Stop();
                     session?.Dispose();
                     videoDataOutput?.Dispose();
-                    stillImageOutput?.Dispose();
+                    photoOutput?.Dispose();
                     deviceInput?.Dispose();
                     videoDataOutputQueue?.Dispose();
                     metadataOutput?.Dispose();
@@ -129,7 +129,10 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     private AVCaptureSession _session;
     private AVCaptureVideoDataOutput _videoDataOutput;
     private AVCaptureAudioDataOutput _audioDataOutput;
-    private AVCaptureStillImageOutput _stillImageOutput;
+    private AVCapturePhotoOutput _photoOutput;
+
+    /// <summary>The photo size chosen with the active format (one of <see cref="PhotoSizes"/>), applied per shot.</summary>
+    private CMVideoDimensions _photoDims;
     private AVCaptureDeviceInput _deviceInput;
 
     /// <summary>KVO on the active device's adjustingExposure, mirrored into FormsControl.IsAdjustingExposure.</summary>
@@ -691,6 +694,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 AVCaptureDeviceFormat format = null;
 
                 SetupStillFormats(allFormats);
+                _previewSizedBuffers = false;
 
                 // Select format based on CaptureMode
                 if (FormsControl.CaptureMode == CaptureModeType.Video)
@@ -769,22 +773,16 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
                 _session.AddInput(_deviceInput);
 
-                var dictionary = new NSMutableDictionary();
-                dictionary[AVVideo.CodecKey] = new NSNumber((int)AVVideoCodec.JPEG);
-                _stillImageOutput = new AVCaptureStillImageOutput()
-                {
-                    OutputSettings = new NSDictionary()
-                };
-                _stillImageOutput.HighResolutionStillImageOutputEnabled = true;
+                _photoOutput = new AVCapturePhotoOutput();
 
-                if (_session.CanAddOutput(_stillImageOutput))
+                if (_session.CanAddOutput(_photoOutput))
                 {
-                    _session.AddOutput(_stillImageOutput);
-                    ApplyStillImageStabilization();
+                    _session.AddOutput(_photoOutput);
+                    ConfigurePhotoOutput(videoDevice);
                 }
                 else
                 {
-                    Console.WriteLine("Could not add still image output to the session");
+                    Console.WriteLine("Could not add photo output to the session");
                     State = CameraProcessorState.Error;
                     return;
                 }
@@ -794,6 +792,12 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                     // Configure video data output BEFORE adding to session
                     _session.AddOutput(_videoDataOutput);
                     _videoDataOutput.AlwaysDiscardsLateVideoFrames = true;
+                    if (OperatingSystem.IsIOSVersionAtLeast(13) || OperatingSystem.IsMacCatalystVersionAtLeast(14))
+                    {
+                        _videoDataOutput.AutomaticallyConfiguresOutputBufferDimensions = !_previewSizedBuffers;
+                        if (_previewSizedBuffers)
+                            _videoDataOutput.DeliversPreviewSizedOutputBuffers = true;
+                    }
                     _videoDataOutput.WeakVideoSettings = new NSDictionary(CVPixelBuffer.PixelFormatTypeKey,
                         CVPixelFormatType.CV32BGRA);
                     _videoDataOutput.SetSampleBufferDelegate(this, _videoDataOutputQueue);
@@ -888,7 +892,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 var filtered = GetFilteredFormats(allFormats);
 
                 var uniqueResolutions = filtered
-                .Select(f => f.HighResolutionStillImageDimensions)
+                .SelectMany(PhotoSizes)
                 .GroupBy(dims => new { dims.Width, dims.Height })
                 .Select(group => group.First())
                 .OrderByDescending(dims => dims.Width * dims.Height)
@@ -953,14 +957,14 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         }
 
         var availableFormats = all
-            .Where(f => f.HighResolutionStillImageDimensions.Width > 0 && f.HighResolutionStillImageDimensions.Height > 0)
+            .Where(f => PhotoSizes(f).Length > 0)
             .Select(f => new
             {
                 Format = f,
                 VideoDims = (f.FormatDescription as CMVideoFormatDescription)?.Dimensions ?? new CMVideoDimensions()
             })
             .Where(f => IsPreviewSizeSuitable(f.VideoDims))
-            .OrderByDescending(f => f.Format.HighResolutionStillImageDimensions.Width * f.Format.HighResolutionStillImageDimensions.Height)
+            .OrderByDescending(f => PhotoPixels(LargestPhotoSize(f.Format)))
             .Select(f => f.Format)
             .ToList();
 
@@ -1010,11 +1014,74 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     }
 
     /// <summary>
+    /// Photo sizes a format can deliver through AVCapturePhotoOutput. iOS 16+ lists them all
+    /// (supportedMaxPhotoDimensions: 48 MP sensors offer 12/24/48 MP on the same format); older
+    /// systems only know the format's single high-resolution still size.
+    /// </summary>
+    private static CMVideoDimensions[] PhotoSizes(AVCaptureDeviceFormat format)
+    {
+        if (OperatingSystem.IsIOSVersionAtLeast(16) || OperatingSystem.IsMacCatalystVersionAtLeast(16))
+        {
+            var sizes = format.SupportedMaxPhotoDimensions;
+            if (sizes != null && sizes.Length > 0)
+            {
+                return sizes.Where(d => d.Width > 0 && d.Height > 0).ToArray();
+            }
+        }
+
+        var dims = format.HighResolutionStillImageDimensions;
+        return dims.Width > 0 && dims.Height > 0 ? new[] { dims } : Array.Empty<CMVideoDimensions>();
+    }
+
+    private static CMVideoDimensions LargestPhotoSize(AVCaptureDeviceFormat format)
+        => PhotoSizes(format).OrderByDescending(PhotoPixels).FirstOrDefault();
+
+    private static int PhotoPixels(CMVideoDimensions dims) => dims.Width * dims.Height;
+
+    /// <summary>One entry per (format, photo size), largest photo first.</summary>
+    private static List<FormatDetail> GetFormatDetails(IEnumerable<AVCaptureDeviceFormat> formats)
+    {
+        return formats
+            .SelectMany(f => PhotoSizes(f).Select(size => new FormatDetail
+            {
+                Format = f,
+                StillDims = size,
+                VideoDims = (f.FormatDescription as CMVideoFormatDescription)?.Dimensions ?? new CMVideoDimensions(),
+                StillPixels = PhotoPixels(size)
+            }))
+            .OrderByDescending(d => d.StillPixels)
+            .ToList();
+    }
+
+    /// <summary>
     /// Select optimal format based on quality requirements
     /// </summary>
     /// <param name="allFormats"></param>
     /// <param name="quality"></param>
     /// <returns></returns>
+    /// <summary>
+    /// 48 MP sensors deliver their full-size photo only on the full-sensor format (4032x3024
+    /// video at 30 fps on iPhone 16 Pro), which the preview filter rejects. For Max that format
+    /// is taken anyway, the smallest such video, and the video output asked for preview-sized
+    /// buffers so the frame pipeline stays at ~1080p. Default when nothing beats
+    /// <paramref name="stillPixels"/>.
+    /// </summary>
+    private static FormatDetail SelectLargerPhotoFormat(List<AVCaptureDeviceFormat> allFormats, int stillPixels)
+    {
+        if (!OperatingSystem.IsIOSVersionAtLeast(13))
+            return default;
+
+        var eightBit = allFormats.Where(IsEightBitFormat).ToList();
+        return GetFormatDetails(eightBit.Count > 0 ? eightBit : allFormats)
+            .Where(d => d.StillPixels > stillPixels && d.VideoDims.Width >= 640 && d.VideoDims.Height >= 480)
+            .OrderByDescending(d => d.StillPixels)
+            .ThenBy(d => d.VideoDims.Width * d.VideoDims.Height)
+            .FirstOrDefault();
+    }
+
+    /// <summary>The active format's video is larger than the frame pipeline takes: ask AVFoundation for preview-sized buffers.</summary>
+    private bool _previewSizedBuffers;
+
     private AVCaptureDeviceFormat SelectOptimalFormat(List<AVCaptureDeviceFormat> allFormats, CaptureQuality quality)
     {
         var availableFormats = GetFilteredFormats(allFormats);
@@ -1022,16 +1089,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         if (!availableFormats.Any())
         {
             Console.WriteLine("[NativeCameraiOS] No valid formats found, using first available");
+            _photoDims = allFormats.Count > 0 ? LargestPhotoSize(allFormats[0]) : default;
             return allFormats.FirstOrDefault();
         }
 
-        var formatDetails = availableFormats.Select(f => new FormatDetail
-        {
-            Format = f,
-            StillDims = f.HighResolutionStillImageDimensions,
-            VideoDims = (f.FormatDescription as CMVideoFormatDescription)?.Dimensions ?? new CMVideoDimensions(),
-            StillPixels = f.HighResolutionStillImageDimensions.Width * f.HighResolutionStillImageDimensions.Height
-        }).ToList();
+        var formatDetails = GetFormatDetails(availableFormats);
 
         //Console.WriteLine($"[NativeCameraiOS] Available formats for quality {quality}:");
         //foreach (var detail in formatDetails)
@@ -1041,7 +1103,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
         var selectedDetail = quality switch
         {
-            CaptureQuality.Max => formatDetails.First(),
+            CaptureQuality.Max => GetManualFormatDetail(formatDetails, 0),
             CaptureQuality.High => SelectFormatByPixelBudget(formatDetails, 12.5),
             CaptureQuality.Medium => SelectFormatByPixelBudget(formatDetails, 10.5),
             CaptureQuality.Low => SelectFormatByPixelBudget(formatDetails, 4.0),
@@ -1051,6 +1113,20 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         };
 
         Console.WriteLine($"[NativeCameraiOS] Selected format: Still {selectedDetail.StillDims.Width}x{selectedDetail.StillDims.Height}, Video {selectedDetail.VideoDims.Width}x{selectedDetail.VideoDims.Height} for quality {quality}");
+
+        _photoDims = selectedDetail.StillDims;
+
+        if (quality == CaptureQuality.Max)
+        {
+            var bigger = SelectLargerPhotoFormat(allFormats, selectedDetail.StillPixels);
+            if (bigger.Format != null)
+            {
+                Console.WriteLine($"[NativeCameraiOS] Max: still {bigger.StillDims.Width}x{bigger.StillDims.Height} needs video {bigger.VideoDims.Width}x{bigger.VideoDims.Height}, preview-sized buffers");
+                _photoDims = bigger.StillDims;
+                _previewSizedBuffers = true;
+                return bigger.Format;
+            }
+        }
 
         return selectedDetail.Format;
     }
@@ -1143,15 +1219,16 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         if (!availableFormats.Any())
         {
             Console.WriteLine("[NativeCameraiOS] No valid formats found for video aspect selection, using first available");
+            _photoDims = allFormats.Count > 0 ? LargestPhotoSize(allFormats[0]) : default;
             return allFormats.FirstOrDefault();
         }
 
         var formatDetails = availableFormats.Select(f => new FormatDetail
         {
             Format = f,
-            StillDims = f.HighResolutionStillImageDimensions,
+            StillDims = LargestPhotoSize(f),
             VideoDims = (f.FormatDescription as CMVideoFormatDescription)?.Dimensions ?? new CMVideoDimensions(),
-            StillPixels = f.HighResolutionStillImageDimensions.Width * f.HighResolutionStillImageDimensions.Height
+            StillPixels = PhotoPixels(LargestPhotoSize(f))
         }).ToList();
 
         // Determine target video dimensions from current VideoQuality settings
@@ -1201,6 +1278,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             .FirstOrDefault();
 
         var chosen = best?.d.Format ?? availableFormats.First();
+        _photoDims = LargestPhotoSize(chosen);
         Debug.WriteLine($"[NativeCameraiOS] Selected format for video aspect {targetW}x{targetH}: Video {best?.d.VideoDims.Width}x{best?.d.VideoDims.Height} @ {best?.maxFps}fps (Supports {targetFps}: {best?.supportsTargetFps})");
         return chosen;
     }
@@ -1503,59 +1581,119 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         return _flashSupported; // iOS supports auto flash when flash is available
     }
 
-    private void SetFlashModeForCapture()
+    /// <summary>
+    /// Session-level photo output setup, after the output joined the session and the active
+    /// format is set: the largest photo it may deliver (the size chosen with the format) and the
+    /// highest processing quality a shot may ask for.
+    /// </summary>
+    private void ConfigurePhotoOutput(AVCaptureDevice device)
     {
-        if (!_flashSupported || _deviceInput?.Device == null)
-            return;
-
-        NSError error;
-        if (_deviceInput.Device.LockForConfiguration(out error))
-        {
-            try
-            {
-                if (_deviceInput.Device.HasFlash)
-                {
-                    switch (_captureFlashMode)
-                    {
-                        case CaptureFlashMode.Off:
-                            _deviceInput.Device.FlashMode = AVCaptureFlashMode.Off;
-                            break;
-                        case CaptureFlashMode.Auto:
-                            _deviceInput.Device.FlashMode = AVCaptureFlashMode.Auto;
-                            break;
-                        case CaptureFlashMode.On:
-                            _deviceInput.Device.FlashMode = AVCaptureFlashMode.On;
-                            break;
-                    }
-                }
-            }
-            finally
-            {
-                _deviceInput.Device.UnlockForConfiguration();
-            }
-        }
-    }
-
-    private void ApplyStillImageStabilization()
-    {
-        if (_stillImageOutput == null)
+        if (_photoOutput == null)
             return;
 
         try
         {
-            // iOS 26 throws on this setter unless the output reports support for it, and the
-            // exception arrives on every capture while stabilization is on.
-            if (!_stillImageOutput.IsStillImageStabilizationSupported)
+            if (OperatingSystem.IsIOSVersionAtLeast(16) || OperatingSystem.IsMacCatalystVersionAtLeast(16))
             {
-                Debug.WriteLine("[NativeCamera.Apple] Still image stabilization not supported by this output");
-                return;
+                // must be one of the active format's sizes, or AVFoundation throws
+                var sizes = PhotoSizes(device.ActiveFormat);
+                var target = sizes.Any(d => d.Width == _photoDims.Width && d.Height == _photoDims.Height)
+                    ? _photoDims
+                    : LargestPhotoSize(device.ActiveFormat);
+                if (target.Width > 0)
+                {
+                    _photoOutput.MaxPhotoDimensions = target;
+                    _photoDims = target;
+                }
+            }
+            else
+            {
+                _photoOutput.IsHighResolutionCaptureEnabled = true;
+                _photoDims = device.ActiveFormat.HighResolutionStillImageDimensions;
             }
 
-            _stillImageOutput.AutomaticallyEnablesStillImageStabilizationWhenAvailable = FormsControl.VideoStabilization;
+            _photoOutput.MaxPhotoQualityPrioritization = AVCapturePhotoQualityPrioritization.Quality;
+
+            Console.WriteLine($"[NativeCameraiOS] Photo output: max {_photoDims.Width}x{_photoDims.Height}");
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[NativeCamera.Apple] Failed to apply still image stabilization: {ex.Message}");
+            Console.WriteLine($"[NativeCameraiOS] Photo output setup failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Settings for one shot: JPEG, the chosen photo size, the flash mode, and the processing
+    /// quality (multi-frame fusion and stabilization when VideoStabilization is on or the photo
+    /// is larger than 12 MP, the fastest shot otherwise), which replaces the old still image
+    /// stabilization switch.
+    /// </summary>
+    private AVCapturePhotoSettings CreatePhotoSettings()
+    {
+        var codec = new NSDictionary<NSString, NSObject>(AVVideo.CodecKey, AVVideoCodecType.Jpeg.GetConstant());
+        var settings = AVCapturePhotoSettings.FromFormat(codec);
+
+        if (OperatingSystem.IsIOSVersionAtLeast(16) || OperatingSystem.IsMacCatalystVersionAtLeast(16))
+        {
+            if (_photoDims.Width > 0)
+                settings.MaxPhotoDimensions = _photoDims;
+        }
+        else
+        {
+            settings.IsHighResolutionPhotoEnabled = true;
+        }
+
+        if (_flashSupported && _deviceInput?.Device?.HasFlash == true)
+        {
+            var mode = _captureFlashMode switch
+            {
+                CaptureFlashMode.On => AVCaptureFlashMode.On,
+                CaptureFlashMode.Auto => AVCaptureFlashMode.Auto,
+                _ => AVCaptureFlashMode.Off
+            };
+            var supported = _photoOutput.SupportedFlashModes;
+            if (supported != null && supported.Contains(mode))
+                settings.FlashMode = mode;
+        }
+
+        // Speed never delivers more than 12 MP (measured on iPhone 16 Pro: asked 8064x6048, got
+        // 4032x3024), so the larger sizes take Balanced whatever the stabilization switch says
+        var large = PhotoPixels(_photoDims) > 12_500_000;
+        settings.PhotoQualityPrioritization = FormsControl.VideoStabilization || large
+            ? AVCapturePhotoQualityPrioritization.Balanced
+            : AVCapturePhotoQualityPrioritization.Speed;
+
+        return settings;
+    }
+
+    /// <summary>Hands one AVCapturePhotoOutput shot (or its error) back as a task.</summary>
+    private sealed class PhotoCaptureDelegate : AVCapturePhotoCaptureDelegate
+    {
+        private readonly TaskCompletionSource<NSData> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<NSData> Task => _result.Task;
+
+        public override void DidFinishProcessingPhoto(AVCapturePhotoOutput output, AVCapturePhoto photo, NSError error)
+        {
+            if (error != null)
+            {
+                _result.TrySetException(new NSErrorException(error));
+                return;
+            }
+
+            var data = photo?.FileDataRepresentation;
+            if (data == null)
+                _result.TrySetException(new InvalidOperationException("The photo output returned no data"));
+            else
+                _result.TrySetResult(data);
+        }
+
+        public override void DidFinishCapture(AVCapturePhotoOutput captureOutput, AVCaptureResolvedPhotoSettings resolvedSettings, NSError error)
+        {
+            if (error != null)
+                _result.TrySetException(new NSErrorException(error));
+            else
+                _result.TrySetException(new InvalidOperationException("The capture finished without a photo"));
         }
     }
 
@@ -1686,7 +1824,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             if (_deviceInput?.Device?.ActiveFormat != null)
             {
                 var activeFormat = _deviceInput.Device.ActiveFormat;
-                var stillDimensions = activeFormat.HighResolutionStillImageDimensions;
+                var stillDimensions = _photoDims.Width > 0 ? _photoDims : LargestPhotoSize(activeFormat);
 
                 return new CaptureFormat
                 {
@@ -1855,9 +1993,32 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         }
     }
 
+    /// <summary>
+    /// Decodes an encoded still into a bitmap as stored (sensor orientation, no EXIF transform),
+    /// like UIImage.ToSKImage did, without its intermediate image copy.
+    /// </summary>
+    private static SKBitmap DecodeStill(NSData data)
+    {
+        using var source = CGImageSource.FromData(data);
+        using var cg = source?.CreateImage(0, (CGImageOptions)null);
+        if (cg == null)
+            throw new InvalidOperationException("Could not decode the captured photo");
+
+        var info = new SKImageInfo((int)cg.Width, (int)cg.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        var bitmap = new SKBitmap(info);
+        using (var colorSpace = CGColorSpace.CreateDeviceRGB())
+        using (var context = new CGBitmapContext(bitmap.GetPixels(), info.Width, info.Height, 8, info.RowBytes,
+                   colorSpace, CGBitmapFlags.ByteOrder32Big | CGBitmapFlags.PremultipliedLast))
+        {
+            context.DrawImage(new CGRect(0, 0, info.Width, info.Height), cg);
+        }
+
+        return bitmap;
+    }
+
     public void TakePicture()
     {
-        if (_isCapturingStill || _stillImageOutput == null)
+        if (_isCapturingStill || _photoOutput == null)
             return;
 
         Task.Run(async () =>
@@ -1874,18 +2035,16 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                     return;
                 }
 
-                // Set flash mode for capture
-                SetFlashModeForCapture();
-
                 var cameraPosition = false
                     ? AVCaptureDevicePosition.Front
                     : AVCaptureDevicePosition.Back;
                 var deviceRotation = FormsControl.DeviceRotation;
 
-                var videoConnection = _stillImageOutput.ConnectionFromMediaType(AVMediaTypes.Video.GetConstant());
-                ApplyStillImageStabilization();
-                var sampleBuffer = await _stillImageOutput.CaptureStillImageTaskAsync(videoConnection);
-                var jpegData = AVCaptureStillImageOutput.JpegStillToNSData(sampleBuffer);
+                // the output keeps the delegate weakly: held here until the shot is back
+                var captureDelegate = new PhotoCaptureDelegate();
+                _photoOutput.CapturePhoto(CreatePhotoSettings(), captureDelegate);
+                using var jpegData = await captureDelegate.Task;
+                GC.KeepAlive(captureDelegate);
 
                 using var image = CIImage.FromData(jpegData);
 
@@ -1902,13 +2061,10 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 }
 #endif
 
-                using var uiImage = UIImage.LoadFromData(jpegData);
-                using var rawImage = uiImage.ToSKImage();
-
-                //using var rawImage = SKImage.FromPixels(info, pinnedPtr, _latestRawFrame.BytesPerRow);
-
-                // Apply rotation if needed
-                using var bitmap = SKBitmap.FromImage(rawImage);
+                // sensor-native pixels (the EXIF orientation is not applied, rotation follows below),
+                // decoded once straight into the bitmap: a 48 MP shot is ~195 MB per copy
+                using var bitmap = DecodeStill(jpegData);
+                Console.WriteLine($"[NativeCameraiOS] Photo {bitmap.Width}x{bitmap.Height}, {jpegData.Length / 1024} KB");
 
                 // Default false saves selfie stills as seen in preview.
                 // True mirrors them back to the non-preview orientation.
@@ -1917,7 +2073,8 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
                 using var skBitmap = HandleOrientationForStillCapture(bitmap, (double)CurrentRotation, deviceRotation, mirrorX);
 
-                var skImage = SKImage.FromBitmap(skBitmap);
+                skBitmap.SetImmutable();
+                var skImage = SKImage.FromBitmap(skBitmap); // immutable: shares the pixels, no copy
 
                 var newExif = 1;
 
@@ -1935,6 +2092,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
                 capturedImage.Meta.Orientation = newExif;
                 FormsControl.CameraDevice.Meta.Orientation = newExif;
+
+                // when the shot was taken, local time as EXIF stores it (the offset is written with it)
+                var taken = capturedImage.Meta.DateTimeOriginal ?? DateTime.Now;
+                capturedImage.Meta.DateTimeOriginal = taken;
+                capturedImage.Meta.DateTimeDigitized ??= taken;
 
                 MainThread.BeginInvokeOnMainThread(() =>
                 {

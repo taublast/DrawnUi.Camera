@@ -50,6 +50,16 @@ public partial class Metadata
             ExtractImageProperties(metadata, exif);
         }
 
+        // the camera's make and model live in the TIFF dictionary, not in EXIF
+        var tiff = props.Tiff?.Dictionary;
+        if (tiff != null)
+        {
+            if (string.IsNullOrEmpty(metadata.Vendor) && tiff["Make"] is NSString tiffMake)
+                metadata.Vendor = tiffMake.ToString();
+            if (string.IsNullOrEmpty(metadata.Model) && tiff["Model"] is NSString tiffModel)
+                metadata.Model = tiffModel.ToString();
+        }
+
         // GPS Data
         var gps = props.Gps;
         if (gps != null)
@@ -156,16 +166,27 @@ public partial class Metadata
     }
 
     /// <summary>
+    /// EXIF dates read "yyyy:MM:dd HH:mm:ss" (local time of the shot), which DateTime.TryParse
+    /// refuses; other spellings still go through it.
+    /// </summary>
+    private static bool TryParseExifDate(string text, out DateTime date)
+    {
+        return DateTime.TryParseExact(text, "yyyy:MM:dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture,
+                   System.Globalization.DateTimeStyles.None, out date)
+               || DateTime.TryParse(text, out date);
+    }
+
+    /// <summary>
     /// Extracts date and time information from EXIF
     /// </summary>
     private static void ExtractDateTimeData(Metadata metadata, CoreGraphics.CGImagePropertiesExif exif)
     {
         if (exif.Dictionary["DateTimeOriginal"] is NSString dateOrigString &&
-            DateTime.TryParse(dateOrigString.ToString(), out var dateOrig))
+            TryParseExifDate(dateOrigString.ToString(), out var dateOrig))
             metadata.DateTimeOriginal = dateOrig;
 
         if (exif.Dictionary["DateTimeDigitized"] is NSString dateDigString &&
-            DateTime.TryParse(dateDigString.ToString(), out var dateDig))
+            TryParseExifDate(dateDigString.ToString(), out var dateDig))
             metadata.DateTimeDigitized = dateDig;
 
         if (exif.Dictionary["SubsecTime"] is NSString subsecString)

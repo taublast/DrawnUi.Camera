@@ -133,6 +133,17 @@ public static class AppleJpegMetadata
         if (meta.DateTimeDigitized.HasValue)
             SetString(exif, "DateTimeDigitized", FormatDate(meta.DateTimeDigitized.Value));
 
+        // EXIF dates carry no zone: the offsets say which local time they are (Photos shows the
+        // shot at its real moment with them)
+        if (meta.DateTimeOriginal.HasValue)
+        {
+            var offset = FormatOffset(meta.DateTimeOriginal.Value);
+            SetString(exif, "OffsetTime", offset);
+            SetString(exif, "OffsetTimeOriginal", offset);
+        }
+        if (meta.DateTimeDigitized.HasValue)
+            SetString(exif, "OffsetTimeDigitized", FormatOffset(meta.DateTimeDigitized.Value));
+
         SetString(exif, "SubsecTime", meta.SubsecTime);
         SetString(exif, "SubsecTimeOriginal", meta.SubsecTimeOriginal);
         SetString(exif, "SubsecTimeDigitized", meta.SubsecTimeDigitized);
@@ -210,6 +221,14 @@ public static class AppleJpegMetadata
 
     private static string FormatDate(DateTime value)
         => value.ToString("yyyy:MM:dd HH:mm:ss", CultureInfo.InvariantCulture);
+
+    /// <summary>"+03:00": this device's UTC offset at that local time.</summary>
+    private static string FormatOffset(DateTime value)
+    {
+        var offset = TimeZoneInfo.Local.GetUtcOffset(value);
+        var sign = offset < TimeSpan.Zero ? "-" : "+";
+        return $"{sign}{Math.Abs(offset.Hours):00}:{Math.Abs(offset.Minutes):00}";
+    }
 
     private static void SetString(NSMutableDictionary dictionary, string key, string value)
     {

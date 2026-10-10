@@ -1090,6 +1090,12 @@ namespace DrawnUi.Camera
                     if (_surface == null)
                         return;
 
+                    // Skia makes its Metal command buffers with commandBufferWithDescriptor:, which returns
+                    // them autoreleased. This runs on a .NET thread with no autorelease pool of its own, so
+                    // that reference was never dropped: two command buffers a frame (~9 MB/min of recording,
+                    // Allocations 2026-10-10: 11k live AGXG17FamilyCommandBuffer in 3 min). Drained per frame.
+                    using var pool = new NSAutoreleasePool();
+
                     _surface.Canvas.Flush();
 
                     _encodingContext?.Flush(true, true); //critical SYNC WAIT avoid saturation

@@ -2669,6 +2669,9 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
             try
             {
+                // the frame is drawn and flushed through Skia's Metal backend synchronously on this thread,
+                // and Metal returns its objects autoreleased: without a pool per frame they are never released
+                using var pool = new NSAutoreleasePool();
                 RecordingFrameAvailable?.Invoke();
             }
             catch (Exception ex)

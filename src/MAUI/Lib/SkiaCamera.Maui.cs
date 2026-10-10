@@ -4567,15 +4567,23 @@ public partial class SkiaCamera : SkiaControl
     {
         try
         {
-            SKBitmap skBitmap = SKBitmap.FromImage(captured.Image);
-            if (reorient)
+            if (!reorient || captured.Rotation == 0)
             {
-                skBitmap = Reorient(skBitmap, captured.Rotation);
+                // encoded from the image itself: a bitmap copy first cost one more full-size buffer
+                // (195 MB at 48 MP) that was never even disposed
+                Debug.WriteLine($"[SkiaCamera] Saving image {captured.Image.Width}x{captured.Image.Height}");
+                var encoded = captured.Image.Encode(format, quality);
+                return encoded?.AsStream();
             }
+
+            using var source = SKBitmap.FromImage(captured.Image);
+            var skBitmap = Reorient(source, captured.Rotation);
 
             Debug.WriteLine($"[SkiaCamera] Saving bitmap {skBitmap.Width}x{skBitmap.Height}");
 
             var data = skBitmap.Encode(format, quality);
+            if (!ReferenceEquals(skBitmap, source))
+                skBitmap.Dispose();
             return data.AsStream();
         }
         catch (Exception e)

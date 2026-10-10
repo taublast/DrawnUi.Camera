@@ -118,6 +118,13 @@ public partial class SkiaCamera : SkiaControl
                     {
                         image.Render(ctx);
                     }
+                    else if (rotation == 0 && configureImage == null && Effect == SkiaImageEffect.None
+                             && TextureScale == 1 && captured.Image.Width == info.Width && captured.Image.Height == info.Height)
+                    {
+                        // nothing to transform: the still IS the prepared frame. Rendering it into a raster
+                        // surface first cost one more full-size copy (195 MB at 48 MP) for an identical image.
+                        composeBase(canvas, captured.Image);
+                    }
                     else
                     {
                         using var preparedSurface = SKSurface.Create(info);
@@ -223,19 +230,28 @@ public partial class SkiaCamera : SkiaControl
                     }
                     else
                     {
-                        using var cpuSurface = SKSurface.Create(info);
-                        using (var cpu = cpuSurface.Canvas)
+                        // read back straight into the result image, no intermediate surface
+                        SKImage result;
+                        using (var gpuImage = surface.Snapshot())
                         {
-                            cpu.DrawSurface(surface, 0, 0);
-                            cpu.Flush();
+                            result = gpuImage.ToRasterImage(true);
                         }
 
-                        tcs.SetResult(cpuSurface.Snapshot());
+                        // A full-size render target goes back to Skia's GPU cache as a scratch texture
+                        // and stays there (~200 MB at 48 MP) until something else needs the room:
+                        // released now, the photo is the only user of that size.
+                        var gpuContext = surface.Context as GRContext;
+                        surface.Dispose();
+                        surface = null;
+                        gpuContext?.PurgeUnlockedResources(true);
+
+                        tcs.SetResult(result);
                     }
                 }
                 finally
                 {
-                    ReturnSurface(surface);
+                    if (surface != null)
+                        ReturnSurface(surface);
                 }
             }
             catch (Exception ex)

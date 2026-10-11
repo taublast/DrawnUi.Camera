@@ -36,21 +36,6 @@ description: Working with DrawnUi.Maui.Camera (SkiaCamera) - device-specific got
 - After a (re)start the auto exposure ramps for up to a second: first frames are black, then over-
   and under-shoot. `IsAdjustingExposure` (KVO on `adjustingExposure`) tells when it settled.
 
-## Zoom and lenses
-
-- `Zoom` is in lens label units on every platform: 1 = main lens, 0.5 = ultra-wide, 5 = 5x telephoto.
-  The lens or sensor zooms as far as it can; only the rest scales the preview (`TextureScale`), and
-  `RenderCapturedPhotoAsync` applies that rest to the photo, so preview, photo and video match.
-- `Type = CameraType.Max` on iOS opens the multi-lens camera (triple, then dual-wide, then dual) and iOS
-  switches lenses by zoom. Never pick a lens in app code; set `Zoom` only.
-- The ultra-wide needs `ZoomLimitMin` lowered (default 1): set it to `ZoomHardwareMin` once `State` is On.
-  `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` update on every start, before `StateChanged` (facing and
-  format changes restart). `Zoom` is applied again after every start.
-- Test lens switching on a subject more than 3 m away: a near subject keeps the ultra-wide at every zoom
-  (macro), low light keeps the main lens instead of the telephoto.
-- Android 11+ zooms with `CONTROL_ZOOM_RATIO` (lens switching on logical multi-cameras, no switch points
-  reported); older Android, Windows and `MockSource` scale the preview.
-
 ## Mock source: a still image instead of the camera
 
 - `camera.MockSource = SKImage.FromEncodedData(stream)` replaces the hardware with the image: store

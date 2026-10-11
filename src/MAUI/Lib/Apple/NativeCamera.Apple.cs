@@ -662,9 +662,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
                     if (UIDevice.CurrentDevice.CheckSystemVersion(13, 0) && FormsControl.Type == CameraType.Max)
                     {
-                        // virtual devices switch lenses by zoom: ultra-wide + wide + tele, then ultra-wide + wide
-                        videoDevice = AVCaptureDevice.GetDefaultDevice(AVCaptureDeviceType.BuiltInTripleCamera, AVMediaTypes.Video, cameraPosition)
-                                      ?? AVCaptureDevice.GetDefaultDevice(AVCaptureDeviceType.BuiltInDualWideCamera, AVMediaTypes.Video, cameraPosition);
+                        videoDevice = AVCaptureDevice.GetDefaultDevice(AVCaptureDeviceType.BuiltInTripleCamera, AVMediaTypes.Video, cameraPosition);
                     }
 
                     if (videoDevice == null)
@@ -1720,80 +1718,26 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
     public void SetZoom(float zoom)
     {
-        ApplyZoom(zoom);
-    }
+        if (_deviceInput?.Device == null)
+            return;
 
-    /// <summary>
-    /// Sets the lens zoom closest to a Zoom value (1 = main lens) and returns the zoom the lens shows now, in the same units.
-    /// </summary>
-    internal double ApplyZoom(double zoom)
-    {
         _zoomScale = zoom;
 
-        var device = _deviceInput?.Device;
-        if (device == null)
-            return 1.0;
-
-        var units = GetZoomUnitsPerFactor(device);
-
         NSError error;
-        if (device.LockForConfiguration(out error))
+        if (_deviceInput.Device.LockForConfiguration(out error))
         {
             try
             {
-                device.VideoZoomFactor = (nfloat)Math.Max(device.MinAvailableVideoZoomFactor,
-                    Math.Min(zoom / units, device.MaxAvailableVideoZoomFactor));
+                var clampedZoom = (nfloat)Math.Max(_deviceInput.Device.MinAvailableVideoZoomFactor,
+                    Math.Min(zoom, _deviceInput.Device.MaxAvailableVideoZoomFactor));
+
+                _deviceInput.Device.VideoZoomFactor = clampedZoom;
             }
             finally
             {
-                device.UnlockForConfiguration();
+                _deviceInput.Device.UnlockForConfiguration();
             }
         }
-
-        return device.VideoZoomFactor * units;
-    }
-
-    /// <summary>
-    /// Zoom range of the open camera and the zoom values where the next lens takes over, in Zoom units (1 = main lens).
-    /// </summary>
-    internal (double Min, double Max, double[] SwitchPoints) GetZoomRange()
-    {
-        var device = _deviceInput?.Device;
-        if (device == null)
-            return (1.0, 1.0, Array.Empty<double>());
-
-        var units = GetZoomUnitsPerFactor(device);
-
-        var switchPoints = UIDevice.CurrentDevice.CheckSystemVersion(13, 0)
-            ? device.VirtualDeviceSwitchOverVideoZoomFactors?.Select(x => x.DoubleValue * units).ToArray()
-            : null;
-
-        return (device.MinAvailableVideoZoomFactor * units,
-            device.MaxAvailableVideoZoomFactor * units,
-            switchPoints ?? Array.Empty<double>());
-    }
-
-    /// <summary>
-    /// Zoom units (1 = main lens) per AVFoundation zoom factor, where factor 1 is the widest lens of a virtual device:
-    /// 0.5 when an ultra-wide takes the range below the main lens' factor 2.
-    /// </summary>
-    private static double GetZoomUnitsPerFactor(AVCaptureDevice device)
-    {
-#if NET10_0_OR_GREATER
-        if (UIDevice.CurrentDevice.CheckSystemVersion(18, 0) && device.DisplayVideoZoomFactorMultiplier > 0)
-            return device.DisplayVideoZoomFactorMultiplier;
-#endif
-
-        if (UIDevice.CurrentDevice.CheckSystemVersion(13, 0)
-            && (device.DeviceType == AVCaptureDeviceType.BuiltInTripleCamera
-                || device.DeviceType == AVCaptureDeviceType.BuiltInDualWideCamera))
-        {
-            var mainLens = device.VirtualDeviceSwitchOverVideoZoomFactors?.FirstOrDefault();
-            if (mainLens != null && mainLens.DoubleValue > 0)
-                return 1.0 / mainLens.DoubleValue;
-        }
-
-        return 1.0;
     }
 
     /// <summary>

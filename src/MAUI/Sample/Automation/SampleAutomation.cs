@@ -850,16 +850,13 @@ public static class SampleAutomation
         // zoom and facing
         await OnMain(() => cam.Zoom = 2);
         Check(await WaitFrames(10, 3) && MockFrames(), "frames after Zoom = 2");
-        Check(cam.TextureScale == 2 && cam.ZoomHardwareMax == 1, string.Create(CultureInfo.InvariantCulture,
-            $"Zoom = 2 scales the mock preview: TextureScale {cam.TextureScale} ZoomHardwareMax {cam.ZoomHardwareMax}"));
-        await OnMain(() => cam.Facing = CameraPosition.Selfie);
-        Check(await Settle(cam, 10) && MockFrames() && !HardwareOpen(), "Facing = Selfie keeps the mock");
-        Check(cam.TextureScale == 2, string.Create(CultureInfo.InvariantCulture, $"zoom kept after the restart: TextureScale {cam.TextureScale}"));
         await OnMain(() =>
         {
             cam.Zoom = 1;
-            cam.Facing = CameraPosition.Default;
+            cam.Facing = CameraPosition.Selfie;
         });
+        Check(await Settle(cam, 10) && MockFrames() && !HardwareOpen(), "Facing = Selfie keeps the mock");
+        await OnMain(() => cam.Facing = CameraPosition.Default);
         Check(await Settle(cam, 10) && MockFrames() && !HardwareOpen(), "Facing = Default keeps the mock");
 
         // IsOn off and on
@@ -872,10 +869,6 @@ public static class SampleAutomation
         // to the hardware and back while running
         await OnMain(() => cam.MockSource = null);
         Check(await Settle(cam, 20) && !MockFrames() && HardwareOpen(), $"MockSource = null opens the camera: frames {_lastPreviewSize}");
-        await OnMain(() => cam.Zoom = 1.5);
-        Check(cam.TextureScale == 1.5 && cam.ZoomHardwareMin == 1 && cam.ZoomHardwareMax == 1, string.Create(CultureInfo.InvariantCulture,
-            $"webcam zoom is digital: TextureScale {cam.TextureScale} hardware {cam.ZoomHardwareMin}-{cam.ZoomHardwareMax}"));
-        await OnMain(() => cam.Zoom = 1);
         await OnMain(() => cam.MockSource = MockImage);
         Check(await Settle(cam, 20) && MockFrames(), "MockSource set while the camera runs: mock frames");
         await Task.Delay(3000); // late state reports of the stopping hardware

@@ -37,14 +37,10 @@ public TimeSpan PreRecordDuration { get; set; }    // Duration of pre-recording 
 public bool IsPreRecording { get; }                // Pre-recording state (read-only)
 public TimeSpan LiveRecordingDuration { get; }     // Duration of current live recording (excluding buffer)
 
-// Zoom & Limits (see Zoom and Lenses below)
-public double Zoom { get; set; }                   // Zoom in lens label units: 1 = main lens, 0.5 = ultra-wide
-public double ZoomLimitMin { get; set; }           // Minimum zoom (default: 1)
-public double ZoomLimitMax { get; set; }           // Maximum zoom (default: 10)
-public double ZoomHardwareMin { get; }             // Lowest zoom the lenses reach (read-only)
-public double ZoomHardwareMax { get; }             // Highest lens or sensor zoom, above it the preview is scaled (read-only)
-public IReadOnlyList<double> ZoomLensSwitchPoints { get; } // Zoom values where the next lens takes over (read-only)
-public CameraType Type { get; set; }               // Max: the iPhone multi-lens camera, lenses switch by zoom (default: Default)
+// Zoom & Limits
+public double Zoom { get; set; }                   // Current zoom level
+public double ZoomLimitMin { get; set; }           // Minimum zoom
+public double ZoomLimitMax { get; set; }           // Maximum zoom
 
 // Audio
 public bool EnableAudioRecording { get; set; }     // Include audio in video recordings (default: true)
@@ -135,17 +131,6 @@ protected internal virtual void OnRawFrameAvailable(RawCameraFrame frame)
 `RenderCapturedPhotoAsync(..., drawOverlay: ...)` lets you reuse existing `ProcessFrame` or `ProcessPreview`-style `Action<DrawableFrame>` code on a captured still photo. `drawOverlay` runs after the still image is rendered and before any optional `SkiaLayout` overlay is rendered. For rotated stills, the callback is replayed in capture-time viewport orientation so reused overlay code sees the expected callback space.
 
 `RenderCapturedPhotoAsync(..., composeBase: ...)` adds a canvas-stage hook for still-photo composition before `drawOverlay` runs. Existing compatibility overloads keep the legacy direct-render path and do not allocate or execute this extra stage unless the new overload is selected.
-
-## Zoom and Lenses
-
-`Zoom` uses the lens labels of the Apple Camera app on every platform: `1` is the main camera's normal view, `0.5` the ultra-wide, `5` a 5x telephoto.
-
-- The camera zooms with its lenses and sensor as far as it can. Only the rest scales the preview, and `TextureScale` reports that part. Photos and videos show what the preview shows; `RenderCapturedPhotoAsync` applies `TextureScale` to the photo.
-- `Zoom` is clamped to `ZoomLimitMin` and `ZoomLimitMax`, and applied again after every camera start.
-- iOS with `Type = CameraType.Max`: the back camera is the multi-lens camera (ultra-wide + main + telephoto, else ultra-wide + main, else main + telephoto). iOS switches the lens as the zoom changes.
-- Android 11 and later: the hardware zoom ratio (`CONTROL_ZOOM_RATIO`), so a camera that includes several lenses switches lenses too. Older Android versions and Windows scale the preview.
-- `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` are updated when `State` turns On, before `StateChanged` is raised. Set `ZoomLimitMin = ZoomHardwareMin` to let users reach the ultra-wide. `ZoomLensSwitchPoints` is empty for a single lens, on Android and on Windows.
-- With `MockSource` set, zoom scales the preview only.
 
 ## Mock Source
 

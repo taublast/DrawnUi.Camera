@@ -57,27 +57,38 @@ A working pattern (from a production AVFoundation camera that switches lenses co
 - zoom outside that range (for example below 1.0 to show a "wider than the lens" frame, or beyond the hardware maximum): `VideoZoomFactor` stays at the limit, and only the remainder is applied as a texture (display) scale;
 - the photo gets the lens zoom for free (it comes from the sensor). A texture zoom is preview-only unless the capture code crops the photo the same way.
 
-## What SkiaCamera does
+## What SkiaCamera does today
 
-Built after 1.10.7.61. Verified on Windows (sample test mode); the iPhone and Android device round is pending.
+Source-read at camera repo commit d4f21f0. NOT verified on a device.
 
-- **Zoom units**: `Zoom` is in Apple label units on every platform: 1 = main lens, 0.5 = ultra-wide, 5 = the 16 Pro tele. Android `CONTROL_ZOOM_RATIO` uses the same units. Default `Zoom` 1, `ZoomLimitMin` 1, `ZoomLimitMax` 10 (in label units 10 already reaches a 5x tele).
-- **Device choice** (iOS back camera): `Type = CameraType.Max` opens Triple, then DualWide, then Dual, then the first back camera. `Type = Default` stays one physical lens. A change restarts the camera.
-- **One zoom path**: the shared `SetZoom` asks the platform for the zoom the hardware can show (`ApplyHardwareZoom`) and scales the preview only by the rest: `TextureScale = Display.ZoomX/Y = Zoom / hardware`. `RenderCapturedPhotoAsync` applies `TextureScale` to the photo, so the photo matches. Before this, Apple and Windows applied the lens zoom AND the same display zoom.
-  - iOS: `VideoZoomFactor = Zoom / units`, clamped to `Min/MaxAvailableVideoZoomFactor`; `units` = `DisplayVideoZoomFactorMultiplier` (iOS 18, net10 builds), else 1 / the first switch-over factor for Triple and DualWide, else 1.
-  - Android (11+): `CONTROL_ZOOM_RATIO` on preview, recording, still and AE-reset requests, clamped to `CONTROL_ZOOM_RATIO_RANGE`. The raw `CapturedImage` comes zoomed. Older versions: preview scaling only.
-  - Windows and `MockSource`: preview scaling only.
-- **Restarts**: on every `State` On the camera re-reads its zoom range and applies `Zoom` again (without raising `Zoomed`).
-- **Read-only API for a zoom UI**: `ZoomHardwareMin` (0.5 with an ultra-wide), `ZoomHardwareMax`, `ZoomLensSwitchPoints` (the switch-over factors in label units: `[1, 5]` on the 16 Pro). Empty switch points on Android and Windows.
-- **No pinch gesture in the library.** Apps put a DrawnUi `SkiaHotspotZoom` over the camera and set `camera.Zoom = e.Value`; its `ZoomMin`/`ZoomMax` should follow `ZoomHardwareMin` and `ZoomLimitMax`.
-- **Start lens**: the app's choice. `Zoom` 1 opens on the main lens like Apple Camera; `Zoom` 0.5 on the ultra-wide.
-- **Session**: no depth output (good). Stills through `AVCapturePhotoOutput` since 1.10.7.61.
+- **Device choice**: `SkiaCamera.Type` (`CameraType.Default` / `Max`, default `Default`, a change restarts the camera). Apple `NativeCamera.SetupHardware`:
+  - `Max`: `BuiltInTripleCamera` (iOS 13+), else `BuiltInDualCamera`, else the first back camera from `DevicesWithMediaType`.
+  - `Default`: the first back camera, which is a single physical lens. No lens switching.
+  - Gap: there is no `BuiltInDualWideCamera` step, so a non-Pro iPhone gets no ultra-wide, even with `Max`.
+- **Session**: no depth output (good), stills through `AVCaptureStillImageOutput`, preset `InputPriority` with `ActiveFormat` set from the filtered 8-bit formats.
+- **Zoom**: bindable `Zoom` (default 1.0), clamped to `ZoomLimitMin` (default 1) and `ZoomLimitMax` (default 10), then `SetZoom(value)` per platform:
+  - Apple: `NativeCamera.SetZoom` sets `VideoZoomFactor` (clamped to Min/MaxAvailable), AND `SetZoom` also sets `Display.ZoomX/ZoomY = value` and `TextureScale = value`. Read literally, the preview gets the lens zoom and the same display zoom on top (about value squared). Check this on a device before building on it.
+  - Android: no hardware zoom. Only `Display.ZoomX/ZoomY` (texture zoom). Whether the photo is cropped to match is not checked.
+  - Windows: `ZoomControl` clamped, plus the same display zoom as Apple.
+  - All three raise `Zoomed` with the value.
+- **No pinch gesture in the library.** Apps put a DrawnUi `SkiaHotspotZoom` over the camera (`ZoomMin`, `ZoomMax`, event `Zoomed` with `ZoomEventArgs.Value`) and set `camera.Zoom = e.Value`.
+- With `ZoomLimitMax = 10` on a triple camera whose tele starts at 10, the user barely reaches the tele lens; `MaxAvailableVideoZoomFactor` was 123.75 on the 16 Pro.
 
-## Open items
+## How to build it
 
-- Android switch points: compute them from the physical cameras of a logical multi-camera (focal lengths and sensor sizes) if a UI needs lens buttons on Android.
-- No `ActiveLens` property (declined for now). iOS has `ActivePrimaryConstituentDevice`, Android `LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID`.
-- Device round: Pro and non-Pro iPhone, an Android phone with a logical multi-camera (Pixel, Samsung). Check that 48 MP stills still work on the virtual device.
+These change library behavior that consumers see, on every platform. The owner approves the API and the cross-platform contract before any code: an iOS-only meaning of `Zoom` is not acceptable, Android and Windows must behave the same way.
+
+1. **Device**: for multi-lens zoom, open the virtual device: Triple, then DualWide, then Dual, then WideAngle. Decide whether that stays behind `Type = Max` or becomes the default.
+2. **One zoom path on Apple**: inside the hardware range, set `VideoZoomFactor` only and keep the display zoom at 1. Use texture zoom only for the part outside the hardware range, and report that part in `TextureScale`. This removes the double zoom.
+3. **Zoom units**: choose and document one meaning for `Zoom`:
+   - "factor of the widest lens" (1.0 = ultra-wide, the raw AVFoundation value), or
+   - "Apple label units" (1.0 = main lens, 0.5 = ultra-wide).
+   Expose read-only data for the UI: switch-over points in `Zoom` units, the label multiplier, the active lens. Each is new public API.
+4. **Start position**: with an ultra-wide constituent, factor 1.0 is the ultra-wide. To open like Apple Camera, set the zoom to the first switch-over factor (the main lens) after the camera is on.
+5. **Pinch math**: pinch scale is a ratio. On gesture start remember the current zoom; on each change set `zoom = startZoom * scale`, clamped to the limits. Clamp `ZoomLimitMax` to the device maximum instead of a fixed 10 when the tele range should be reachable.
+6. **Session hygiene**: no depth output unless depth is used. If depth is ever needed, expect the dual-wide camera to lose its ultra-wide while depth runs.
+7. **Capture**: the photo and the video must show what the preview shows. Lens zoom does that by itself; any texture-zoom part needs the same crop on capture.
+8. **Android parity**: logical multi-camera devices on Android switch lenses through `CONTROL_ZOOM_RATIO` (API 30+) on the logical camera id. The Android implementation today is texture-only. Plan the Android side in the same change, so `Zoom` means the same thing on both.
 
 ## How to test on a phone
 

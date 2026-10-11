@@ -90,8 +90,9 @@ var camera = new SkiaCamera
 | `IsFlashSupported` | `bool` | - | Whether flash is available (read-only) |
 | `IsAutoFlashSupported` | `bool` | - | Whether auto flash is supported (read-only) |
 | `Effect` | `SkiaImageEffect` | `None` | Real-time effects: `None`, `Sepia`, `BlackAndWhite`, `Pastel` |
-| `Zoom` | `double` | `1.0` | Camera zoom level |
+| `Zoom` | `double` | `1.0` | Camera zoom: 1 = main lens, 0.5 = ultra-wide |
 | `ZoomLimitMin/Max` | `double` | `1.0/10.0` | Zoom constraints |
+| `Type` | `CameraType` | `Default` | `Max`: the iPhone multi-lens camera, lenses switch by zoom |
 | `State` | `HardwareState` | `Off` | Current camera state (read-only) |
 | `IsBusy` | `bool` | `false` | Whether camera is processing (read-only) |
 
@@ -484,6 +485,8 @@ Use named arguments here because `drawOverlay` now sits before `configureImage` 
 
 ## 10. Zoom Control
 
+`Zoom` uses the lens labels of the Apple Camera app on every platform: `1` is the main camera's normal view, `0.5` the ultra-wide, `5` a 5x telephoto. The camera zooms with its lenses and sensor as far as it can, and only the rest scales the preview (`TextureScale`). Photos and videos show what the preview shows.
+
 ```csharp
 camera.Zoom = 2.0; // 2x zoom
 
@@ -503,6 +506,32 @@ private void OnZoomed(object sender, ZoomEventArgs e)
     camera.Zoom = e.Value;
 }
 ```
+
+### Several lenses (iPhone)
+
+With `Type = CameraType.Max`, an iPhone opens its multi-lens camera: ultra-wide, main and telephoto on Pro models, ultra-wide and main on the others. iOS switches the lens by itself as the zoom changes, like the Apple Camera app. Your app only sets `Zoom`.
+
+```csharp
+camera.Type = CameraType.Max;
+
+camera.StateChanged += (s, state) =>
+{
+    if (state == HardwareState.On)
+    {
+        // 0.5 with an ultra-wide, else 1
+        camera.ZoomLimitMin = camera.ZoomHardwareMin;
+
+        // for lens buttons: 1 and 5 on an iPhone 16 Pro
+        var lenses = camera.ZoomLensSwitchPoints;
+    }
+};
+```
+
+- `Zoom` starts at 1, the main lens. Set `Zoom = 0.5` to open on the ultra-wide.
+- `ZoomLimitMin` is 1 by default, so users reach the ultra-wide only after you lower it.
+- `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` are read-only. They are updated when `State` turns On, and a facing or format change restarts the camera.
+- When the subject is close, iOS keeps the ultra-wide at every zoom (macro). In low light it can use the main lens instead of the telephoto. This is normal. Test lens switching on a subject more than 3 m away.
+- Android 11 and later zoom with the camera's own zoom ratio, so a camera that includes several lenses switches lenses too. Android does not report switch points. Older Android versions and Windows scale the preview.
 
 ## 11. Camera State Management
 

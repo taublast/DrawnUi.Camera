@@ -371,18 +371,14 @@ public partial class SkiaCamera
         }
     }
 
-    public virtual void SetZoom(double value)
+    private double ApplyHardwareZoom(double value)
     {
-        TextureScale = value;
-        NativeControl?.SetZoom((float)value);
+        return (NativeControl as NativeCamera)?.ApplyZoom(value) ?? 1.0;
+    }
 
-        if (Display != null)
-        {
-            Display.ZoomX = TextureScale;
-            Display.ZoomY = TextureScale;
-        }
-
-        Zoomed?.Invoke(this, value);
+    private (double Min, double Max, double[] SwitchPoints) GetHardwareZoomRange()
+    {
+        return (NativeControl as NativeCamera)?.GetZoomRange() ?? (1.0, 1.0, Array.Empty<double>());
     }
 
     private void OnRecordingFrameAvailable()

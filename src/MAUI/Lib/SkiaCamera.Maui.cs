@@ -1009,19 +1009,92 @@ public partial class SkiaCamera : SkiaControl
     {
         if (bindable is SkiaCamera control)
         {
-            var zoom = (double)newvalue;
-            if (zoom < control.ZoomLimitMin)
-            {
-                zoom = control.ZoomLimitMin;
-            }
-            else if (zoom > control.ZoomLimitMax)
-            {
-                zoom = control.ZoomLimitMax;
-            }
-
-            control.SetZoom(zoom);
+            control.SetZoom(control.ClampZoom((double)newvalue));
         }
     }
+
+    private double ClampZoom(double zoom)
+    {
+        if (zoom < ZoomLimitMin)
+        {
+            return ZoomLimitMin;
+        }
+
+        if (zoom > ZoomLimitMax)
+        {
+            return ZoomLimitMax;
+        }
+
+        return zoom;
+    }
+
+    /// <summary>
+    /// Lowest Zoom the open camera reaches with its lenses, in Zoom units (1 = main lens), for example 0.5 with an iPhone ultra-wide.
+    /// Updated when State turns On; 1 when the camera has no hardware zoom.
+    /// Zoom never goes below ZoomLimitMin, so set ZoomLimitMin to this value to let users reach the ultra-wide.
+    /// </summary>
+    public double ZoomHardwareMin { get; private set; } = 1.0;
+
+    /// <summary>
+    /// Highest Zoom the open camera reaches with lens or sensor zoom, in Zoom units (1 = main lens).
+    /// Above it, up to ZoomLimitMax, the preview is scaled instead (see TextureScale).
+    /// Updated when State turns On; 1 when the camera has no hardware zoom.
+    /// </summary>
+    public double ZoomHardwareMax { get; private set; } = 1.0;
+
+    /// <summary>
+    /// Zoom values where the next lens takes over, ascending, in Zoom units: 1 and 5 on an iPhone 16 Pro with Type = Max.
+    /// Updated when State turns On; empty for a single lens and where the platform does not report them (Android, Windows).
+    /// </summary>
+    public IReadOnlyList<double> ZoomLensSwitchPoints { get; private set; } = Array.Empty<double>();
+
+#if ONPLATFORM
+
+    /// <summary>
+    /// Sets the zoom in Zoom units (1 = main lens, 0.5 = ultra-wide). The lens or sensor zooms as far as it can,
+    /// and only the rest scales the preview (TextureScale). Raises Zoomed.
+    /// </summary>
+    /// <param name="value">Zoom, already clamped to ZoomLimitMin and ZoomLimitMax.</param>
+    public virtual void SetZoom(double value)
+    {
+        ApplyZoom(value);
+
+        Zoomed?.Invoke(this, value);
+    }
+
+    private void ApplyZoom(double value)
+    {
+        var hardware = _mockBitmap == null ? ApplyHardwareZoom(value) : 1.0;
+        if (hardware <= 0)
+        {
+            hardware = 1.0;
+        }
+
+        TextureScale = value / hardware;
+
+        if (Display != null)
+        {
+            Display.ZoomX = TextureScale;
+            Display.ZoomY = TextureScale;
+        }
+    }
+
+    private void UpdateZoomHardware()
+    {
+        var (min, max, switchPoints) = _mockBitmap == null
+            ? GetHardwareZoomRange()
+            : (1.0, 1.0, Array.Empty<double>());
+
+        ZoomHardwareMin = min;
+        ZoomHardwareMax = max;
+        ZoomLensSwitchPoints = switchPoints;
+
+        OnPropertyChanged(nameof(ZoomHardwareMin));
+        OnPropertyChanged(nameof(ZoomHardwareMax));
+        OnPropertyChanged(nameof(ZoomLensSwitchPoints));
+    }
+
+#endif
 
     protected virtual void ApplyDisplayProperties()
     {
@@ -1229,6 +1302,12 @@ public partial class SkiaCamera : SkiaControl
         if (State == HardwareState.On)
         {
             UpdatePreviewScaleFromFormat();
+
+#if ONPLATFORM
+            // a new device or session starts at its own zoom
+            UpdateZoomHardware();
+            ApplyZoom(ClampZoom(Zoom));
+#endif
 
             // Start preview audio capture if EnableAudioRecording or EnableAudioMonitoring is enabled and not recording
             if ((CaptureMode == CaptureModeType.Video && EnableAudioRecording || EnableAudioMonitoring) && !IsRecording && !IsPreRecording)

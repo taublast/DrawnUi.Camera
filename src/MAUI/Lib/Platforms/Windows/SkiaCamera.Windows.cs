@@ -13,18 +13,15 @@ public partial class SkiaCamera : SkiaControl
     private CapturedImage _windowsPendingRecordingFrame;
     private int _windowsRecordingWorkerActive;
 
-    public virtual void SetZoom(double value)
+    // Windows zoom is digital: the whole Zoom scales the preview
+    private double ApplyHardwareZoom(double value)
     {
-        TextureScale = value;
-        NativeControl?.SetZoom((float)value);
+        return 1.0;
+    }
 
-        if (Display != null)
-        {
-            Display.ZoomX = TextureScale;
-            Display.ZoomY = TextureScale;
-        }
-
-        Zoomed?.Invoke(this, value);
+    private (double Min, double Max, double[] SwitchPoints) GetHardwareZoomRange()
+    {
+        return (1.0, 1.0, Array.Empty<double>());
     }
 
     public static void OpenFileInGallery(string imageFilePath)

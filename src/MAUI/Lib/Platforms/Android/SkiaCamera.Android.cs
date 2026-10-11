@@ -62,20 +62,14 @@ public partial class SkiaCamera
         }
     }
 
-    public virtual void SetZoom(double value)
+    private double ApplyHardwareZoom(double value)
     {
-        // Hardware zoom not supported on Android currently, using manual scaling
-        TextureScale = value;
+        return (NativeControl as NativeCamera)?.ApplyZoom(value) ?? 1.0;
+    }
 
-        //in theory nativecontrol should set TextureScale regarding on the amount it was able to set using hardware
-        //so the remaining zoom comes from scaling the output texture (preview)
-        NativeControl.SetZoom((float)value);
-
-        //temporary hack - preview is our texture
-        Display.ZoomX = TextureScale;
-        Display.ZoomY = TextureScale;
-
-        Zoomed?.Invoke(this, value);
+    private (double Min, double Max, double[] SwitchPoints) GetHardwareZoomRange()
+    {
+        return (NativeControl as NativeCamera)?.GetZoomRange() ?? (1.0, 1.0, Array.Empty<double>());
     }
 
     private bool orderedRestart = false;

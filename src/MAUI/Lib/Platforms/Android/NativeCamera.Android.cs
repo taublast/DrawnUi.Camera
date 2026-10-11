@@ -121,7 +121,60 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
     public void SetZoom(float zoom)
     {
-        ZoomScale = zoom;
+        ApplyZoom(zoom);
+    }
+
+    // CONTROL_ZOOM_RATIO range of the open camera (Android 11+), 0 when it has none
+    private float _zoomRatioMin;
+    private float _zoomRatioMax;
+    private float _zoomRatio = 1f;
+
+    /// <summary>
+    /// Sets the hardware zoom ratio closest to a Zoom value (1 = main lens) and returns it; 1 without CONTROL_ZOOM_RATIO.
+    /// A logical multi-camera switches lenses by this ratio.
+    /// </summary>
+    internal double ApplyZoom(double zoom)
+    {
+        ZoomScale = (float)zoom;
+
+        if (_zoomRatioMax <= 0)
+            return 1.0;
+
+        _zoomRatio = Math.Clamp((float)zoom, _zoomRatioMin, _zoomRatioMax);
+
+        if (mPreviewRequestBuilder != null && CaptureSession != null)
+        {
+            try
+            {
+                ApplyZoomRatio(mPreviewRequestBuilder);
+                mPreviewRequest = mPreviewRequestBuilder.Build();
+                CaptureSession.SetRepeatingRequest(mPreviewRequest, mCaptureCallback, mBackgroundHandler);
+            }
+            catch (Exception e)
+            {
+                Trace.WriteLine($"[CAMERA] ApplyZoom error: {e}");
+            }
+        }
+
+        return _zoomRatio;
+    }
+
+    /// <summary>
+    /// Zoom range of the open camera in Zoom units (1 = main lens). Android does not report lens switch points.
+    /// </summary>
+    internal (double Min, double Max, double[] SwitchPoints) GetZoomRange()
+    {
+        return _zoomRatioMax > 0
+            ? (_zoomRatioMin, _zoomRatioMax, Array.Empty<double>())
+            : (1.0, 1.0, Array.Empty<double>());
+    }
+
+    private void ApplyZoomRatio(CaptureRequest.Builder requestBuilder)
+    {
+        if (_zoomRatioMax > 0 && OperatingSystem.IsAndroidVersionAtLeast(30))
+        {
+            requestBuilder.Set(CaptureRequest.ControlZoomRatio, _zoomRatio);
+        }
     }
 
     /// <summary>
@@ -1295,6 +1348,15 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
                     SensorOrientation = (int)(Integer)characteristics.Get(CameraCharacteristics.SensorOrientation);
 
+                    _zoomRatioMin = _zoomRatioMax = 0;
+                    if (OperatingSystem.IsAndroidVersionAtLeast(30)
+                        && characteristics.Get(CameraCharacteristics.ControlZoomRatioRange) is Android.Util.Range zoomRange)
+                    {
+                        _zoomRatioMin = ((Float)zoomRange.Lower).FloatValue();
+                        _zoomRatioMax = ((Float)zoomRange.Upper).FloatValue();
+                        _zoomRatio = Math.Clamp(ZoomScale, _zoomRatioMin, _zoomRatioMax);
+                    }
+
 
                     Point displaySize = new(width, height);
                     //activity.WindowManager.DefaultDisplay.GetSize(displaySize);
@@ -1994,6 +2056,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
             // Reset AE state
             resetRequestBuilder.Set(CaptureRequest.ControlAePrecaptureTrigger, (int)ControlAEPrecaptureTrigger.Cancel);
+            ApplyZoomRatio(resetRequestBuilder);
 
             var resetRequest = resetRequestBuilder.Build();
             CaptureSession.Capture(resetRequest, mCaptureCallback, mBackgroundHandler);
@@ -2253,6 +2316,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
             stillCaptureBuilder.AddTarget(mImageReaderPhoto.Surface);
 
             SetCapturingStillOptions(stillCaptureBuilder);
+            ApplyZoomRatio(stillCaptureBuilder);
             stillCaptureBuilder.Set(CaptureRequest.JpegOrientation, SensorOrientation);
 
             CaptureSession.Capture(stillCaptureBuilder.Build(),
@@ -2275,6 +2339,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         {
             mPreviewRequestBuilder = mCameraDevice.CreateCaptureRequest(CameraTemplate.Preview);
             ApplyPreviewVideoStabilization(mPreviewRequestBuilder);
+            ApplyZoomRatio(mPreviewRequestBuilder);
 
             // Apply current flash mode to preview request builder
             if (mFlashSupported)
@@ -2383,6 +2448,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
             // WE ARE RECORDING !!!
             mPreviewRequestBuilder = mCameraDevice.CreateCaptureRequest(CameraTemplate.Record);
             ApplyPreviewVideoStabilization(mPreviewRequestBuilder, preferRecordingStabilization: true);
+            ApplyZoomRatio(mPreviewRequestBuilder);
 
             // Apply flash mode
             if (mFlashSupported)
@@ -3570,6 +3636,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
             // Create capture request for video recording
             mPreviewRequestBuilder = mCameraDevice.CreateCaptureRequest(CameraTemplate.Record);
             ApplyPreviewVideoStabilization(mPreviewRequestBuilder, preferRecordingStabilization: true);
+            ApplyZoomRatio(mPreviewRequestBuilder);
 
             mPreviewRequestBuilder.AddTarget(previewSurface);
             mPreviewRequestBuilder.AddTarget(recorderSurface);

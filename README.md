@@ -28,14 +28,18 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.31
+## What's New  1.10.7.61
 
- * Built on DrawnUi 1.10.7.3 (`DrawnUi.Maui` / `DrawnUi.Net`).
- * iOS: recording no longer keeps the audio in memory until it stops.
- * iOS: the preview scaler releases its GPU command buffers every frame, so memory stays flat while the camera is on.
+ * Built on DrawnUi 1.10.7.6 (`DrawnUi.Maui` / `DrawnUi.Net`).
+ * iOS: photos are taken with `AVCapturePhotoOutput`, with settings per shot (flash, quality). At `Max` quality, iPhones with a 48 MP camera now take full 48 MP photos (12 MP before).
+ * iOS: photos carry the date they were taken (`DateTimeOriginal`, with the time zone offset).
+ * MAUI: rendering and saving a captured photo makes fewer full-size copies, so a 48 MP photo needs less memory at its peak (about 1.5 GB instead of 2.0 GB).
+ * iOS: recording releases the GPU command buffers of every frame, so memory grows much more slowly while recording.
 
 ## Previously 
 
+ * iOS: recording no longer keeps the audio in memory until it stops.
+ * iOS: the preview scaler releases its GPU command buffers every frame, so memory stays flat while the camera is on.
  * MAUI: you can now set an image instead of the real camera source: put it in `MockSource`. The real camera stays off and no camera permission is asked, while preview shaders, frame processing and taking photos work with your image as if it came from the camera. Video recording is not available while an image is set. See the [Usage Guide](docs/usage-guide.md#17-mock-source-a-still-image-instead-of-the-camera).
  * iOS: on iOS 26, taking a photo with stabilization on no longer throws and logs an error on every capture.
  * iOS: passkey sign-in codes. A site that offers "sign in with a passkey on another device" shows a QR code; `DetectedCode.IsPasskeySignIn` recognizes it, and `SkiaCamera.StartPasskeySignInAsync(code)` hands it to the system, which shows its own passkey sheet and signs the user in. Your app never sees a key. Call it from a tap. `SkiaCamera.IsPasskeySignInSupported` tells whether the system can take the code: iOS 16 and later for now. See the [Usage Guide](docs/usage-guide.md#passkey-sign-in-codes).
@@ -46,8 +50,6 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * Windows: `GetPreviewImage` never waits for a frame, and a failed camera start or stop no longer raises `OnError`, both as on Android and iOS.
  * Windows: no more full garbage collections twenty times a second while the camera is on, so scrolling no longer stutters in any window. The preview also no longer breaks when another library in the app opens Direct3D (ONNX Runtime with DirectML, for example), which used to bring that garbage collection and stutter back.
  * Windows: switching the camera off hands the device back, so the webcam light and privacy indicator go off and other apps can use it. A running recording keeps the device.
- * iOS: saved photos keep their metadata. Photos showed "No camera information" and "No lens information" because iOS re-serialized the EXIF while importing raw data and dropped every value stored out of line - make, model, lens make and model, exposure time, aperture, focal length. The asset now goes to Photos as a file, which it stores byte for byte. EXIF, TIFF and GPS are written with ImageIO (`AppleJpegMetadata`) instead of the hand-built segment in `JpegExifInjector`, which stays as fallback and on other platforms. The compressed image is copied from the source, so nothing is re-encoded and quality is unchanged.
- * iOS: fixed a crash when recording started while preview audio was still starting, e.g. record tapped right after switching `CaptureMode` to Video. Stopping preview audio disposed the `AVAudioEngine` under its running setup (`EXC_BAD_ACCESS` in `outputFormatForBus:`). `AudioCaptureApple` now serializes engine setup and cleanup, and a preview audio start that was stopped meanwhile gives up instead of leaving an engine running.
 
 ## Extending SkiaCamera
 

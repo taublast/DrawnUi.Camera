@@ -1030,7 +1030,7 @@ public partial class SkiaCamera : SkiaControl
 
     /// <summary>
     /// Lowest Zoom the open camera reaches with its lenses, in Zoom units (1 = main lens), for example 0.5 with an iPhone ultra-wide.
-    /// Updated when State turns On; 1 when the camera has no hardware zoom.
+    /// Updated when State turns On, before StateChanged is raised; 1 when the camera has no hardware zoom.
     /// Zoom never goes below ZoomLimitMin, so set ZoomLimitMin to this value to let users reach the ultra-wide.
     /// </summary>
     public double ZoomHardwareMin { get; private set; } = 1.0;
@@ -1038,13 +1038,13 @@ public partial class SkiaCamera : SkiaControl
     /// <summary>
     /// Highest Zoom the open camera reaches with lens or sensor zoom, in Zoom units (1 = main lens).
     /// Above it, up to ZoomLimitMax, the preview is scaled instead (see TextureScale).
-    /// Updated when State turns On; 1 when the camera has no hardware zoom.
+    /// Updated when State turns On, before StateChanged is raised; 1 when the camera has no hardware zoom.
     /// </summary>
     public double ZoomHardwareMax { get; private set; } = 1.0;
 
     /// <summary>
     /// Zoom values where the next lens takes over, ascending, in Zoom units: 1 and 5 on an iPhone 16 Pro with Type = Max.
-    /// Updated when State turns On; empty for a single lens and where the platform does not report them (Android, Windows).
+    /// Updated when State turns On, before StateChanged is raised; empty for a single lens and where the platform does not report them (Android, Windows).
     /// </summary>
     public IReadOnlyList<double> ZoomLensSwitchPoints { get; private set; } = Array.Empty<double>();
 
@@ -1295,6 +1295,16 @@ public partial class SkiaCamera : SkiaControl
     /// <param name="state"></param>
     public virtual void OnStateChanged(HardwareState state)
     {
+#if ONPLATFORM
+        // before StateChanged, so its handlers read the new zoom range;
+        // a new device or session starts at its own zoom
+        if (State == HardwareState.On)
+        {
+            UpdateZoomHardware();
+            ApplyZoom(ClampZoom(Zoom));
+        }
+#endif
+
         StateChanged?.Invoke(this, state);
         UpdateInfo();
 
@@ -1302,12 +1312,6 @@ public partial class SkiaCamera : SkiaControl
         if (State == HardwareState.On)
         {
             UpdatePreviewScaleFromFormat();
-
-#if ONPLATFORM
-            // a new device or session starts at its own zoom
-            UpdateZoomHardware();
-            ApplyZoom(ClampZoom(Zoom));
-#endif
 
             // Start preview audio capture if EnableAudioRecording or EnableAudioMonitoring is enabled and not recording
             if ((CaptureMode == CaptureModeType.Video && EnableAudioRecording || EnableAudioMonitoring) && !IsRecording && !IsPreRecording)

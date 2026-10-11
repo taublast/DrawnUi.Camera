@@ -144,7 +144,7 @@ protected internal virtual void OnRawFrameAvailable(RawCameraFrame frame)
 - `Zoom` is clamped to `ZoomLimitMin` and `ZoomLimitMax`, and applied again after every camera start.
 - iOS with `Type = CameraType.Max`: the back camera is the multi-lens camera (ultra-wide + main + telephoto, else ultra-wide + main, else main + telephoto). iOS switches the lens as the zoom changes.
 - Android 11 and later: the hardware zoom ratio (`CONTROL_ZOOM_RATIO`), so a camera that includes several lenses switches lenses too. Older Android versions and Windows scale the preview.
-- `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` are updated when `State` turns On. Set `ZoomLimitMin = ZoomHardwareMin` to let users reach the ultra-wide. `ZoomLensSwitchPoints` is empty for a single lens, on Android and on Windows.
+- `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` are updated when `State` turns On, before `StateChanged` is raised. Set `ZoomLimitMin = ZoomHardwareMin` to let users reach the ultra-wide. `ZoomLensSwitchPoints` is empty for a single lens, on Android and on Windows.
 - With `MockSource` set, zoom scales the preview only.
 
 ## Mock Source

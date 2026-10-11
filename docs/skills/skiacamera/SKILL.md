@@ -44,7 +44,7 @@ description: Working with DrawnUi.Maui.Camera (SkiaCamera) - device-specific got
 - `Type = CameraType.Max` on iOS opens the multi-lens camera (triple, then dual-wide, then dual) and iOS
   switches lenses by zoom. Never pick a lens in app code; set `Zoom` only.
 - The ultra-wide needs `ZoomLimitMin` lowered (default 1): set it to `ZoomHardwareMin` once `State` is On.
-  `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` update on every start (facing and
+  `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` update on every start, before `StateChanged` (facing and
   format changes restart). `Zoom` is applied again after every start.
 - Test lens switching on a subject more than 3 m away: a near subject keeps the ultra-wide at every zoom
   (macro), low light keeps the main lens instead of the telephoto.

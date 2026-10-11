@@ -529,7 +529,7 @@ camera.StateChanged += (s, state) =>
 
 - `Zoom` starts at 1, the main lens. Set `Zoom = 0.5` to open on the ultra-wide.
 - `ZoomLimitMin` is 1 by default, so users reach the ultra-wide only after you lower it.
-- `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` are read-only. They are updated when `State` turns On, and a facing or format change restarts the camera.
+- `ZoomHardwareMin`, `ZoomHardwareMax` and `ZoomLensSwitchPoints` are read-only. They are updated when `State` turns On, before `StateChanged` is raised, and a facing or format change restarts the camera.
 - When the subject is close, iOS keeps the ultra-wide at every zoom (macro). In low light it can use the main lens instead of the telephoto. This is normal. Test lens switching on a subject more than 3 m away.
 - Android 11 and later zoom with the camera's own zoom ratio, so a camera that includes several lenses switches lenses too. Android does not report switch points. Older Android versions and Windows scale the preview.
 

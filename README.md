@@ -28,9 +28,9 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.71
+## What's New  1.10.7.81
 
- * Built on DrawnUi 1.10.7.7 (`DrawnUi.Maui` / `DrawnUi.Net`).
+ * Built on DrawnUi 1.10.7.8 (`DrawnUi.Maui` / `DrawnUi.Net`), with its iOS fix for one caret when switching between fields in different canvases.
 
 ## Previously 
 

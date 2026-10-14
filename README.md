@@ -28,16 +28,16 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.61
+## What's New  1.10.7.71
 
- * Built on DrawnUi 1.10.7.6 (`DrawnUi.Maui` / `DrawnUi.Net`).
- * iOS: photos are taken with `AVCapturePhotoOutput`, with settings per shot (flash, quality). At `Max` quality, iPhones with a 48 MP camera now take full 48 MP photos (12 MP before).
- * iOS: photos carry the date they were taken (`DateTimeOriginal`, with the time zone offset).
- * MAUI: rendering and saving a captured photo makes fewer full-size copies, so a 48 MP photo needs less memory at its peak (about 1.5 GB instead of 2.0 GB).
- * iOS: recording releases the GPU command buffers of every frame, so memory grows much more slowly while recording.
+ * Built on DrawnUi 1.10.7.7 (`DrawnUi.Maui` / `DrawnUi.Net`).
 
 ## Previously 
 
+ * iOS: photos are taken with `AVCapturePhotoOutput`, with settings per shot (flash, quality). At `Max` quality, iPhones with a 48 MP camera now take full 48 MP photos (12 MP before).
+ * iOS: photos carry the date they were taken (`DateTimeOriginal`, with the time zone offset).
+ * MAUI: rendering and saving a captured photo makes fewer full-size copies, so a 48 MP photo needs less memory at its peak (about 1.5 GB instead of 2.0 GB).
+ * iOS: memory no longer grows while recording: the GPU command buffers of every frame are released.
  * iOS: recording no longer keeps the audio in memory until it stops.
  * iOS: the preview scaler releases its GPU command buffers every frame, so memory stays flat while the camera is on.
  * MAUI: you can now set an image instead of the real camera source: put it in `MockSource`. The real camera stays off and no camera permission is asked, while preview shaders, frame processing and taking photos work with your image as if it came from the camera. Video recording is not available while an image is set. See the [Usage Guide](docs/usage-guide.md#17-mock-source-a-still-image-instead-of-the-camera).
@@ -46,10 +46,6 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * iOS: the camera finds QR codes and barcodes in the live preview. Set `CodeDetection` (for example `CameraCodeTypes.Qr`) and listen to `CodesDetected`: every code comes with its text and its corners, and `TryMapPreviewPoint` turns a corner into a position on the canvas. The system's capture pipeline does the detection, so your code reads no frame pixels for it and nothing is added to the render thread. Off by default, and off costs nothing. `SkiaCamera.IsCodeDetectionSupported` tells whether the platform can do it: iOS for now. See the [Usage Guide](docs/usage-guide.md#16-code-detection-qr-and-barcodes).
  * Windows: the camera preview and video recording now run on the GPU (`UseGpuProcessing`, on by default). Frames reach the screen and the encoder without a CPU copy, hardware video encoders are used, and CPU use drops. When the machine can't do it (another GPU, a driver refusing the device) the camera falls back to the previous path by itself, never a black preview. A camera switched on before its canvas first draws still gets the GPU path, and each camera frame takes less work, with its Direct3D surface released right after use.
  * Windows: recordings start with their first frame, the preview stays live while a recording starts, and switching the camera off and on quickly no longer kills the preview.
- * Windows: ML frame access (`TryGetRgba`) on GPU frames is prepared on the camera thread, so it costs the UI thread about half as much (ex. 1.6 ms instead of 2.9 ms at 1080p), and the bytes always belong to the frame you got.
- * Windows: `GetPreviewImage` never waits for a frame, and a failed camera start or stop no longer raises `OnError`, both as on Android and iOS.
- * Windows: no more full garbage collections twenty times a second while the camera is on, so scrolling no longer stutters in any window. The preview also no longer breaks when another library in the app opens Direct3D (ONNX Runtime with DirectML, for example), which used to bring that garbage collection and stutter back.
- * Windows: switching the camera off hands the device back, so the webcam light and privacy indicator go off and other apps can use it. A running recording keeps the device.
 
 ## Extending SkiaCamera
 

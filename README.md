@@ -28,12 +28,13 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.81
+## What's New  1.10.7.91
 
- * Built on DrawnUi 1.10.7.8 (`DrawnUi.Maui` / `DrawnUi.Net`), with its iOS fix for one caret when switching between fields in different canvases.
+ * Built on DrawnUi 1.10.7.9 (`DrawnUi.Maui` / `DrawnUi.Net`), with its fixes: switching input off works the same on every control, a drawer no longer stops halfway, no more cut text at in-between screen scales, and `SafeAction` runs on time.
 
 ## Previously 
 
+ * Built on DrawnUi 1.10.7.8, with its iOS fix for one caret when switching between fields in different canvases.
  * iOS: photos are taken with `AVCapturePhotoOutput`, with settings per shot (flash, quality). At `Max` quality, iPhones with a 48 MP camera now take full 48 MP photos (12 MP before).
  * iOS: photos carry the date they were taken (`DateTimeOriginal`, with the time zone offset).
  * MAUI: rendering and saving a captured photo makes fewer full-size copies, so a 48 MP photo needs less memory at its peak (about 1.5 GB instead of 2.0 GB).
@@ -45,7 +46,6 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * iOS: passkey sign-in codes. A site that offers "sign in with a passkey on another device" shows a QR code; `DetectedCode.IsPasskeySignIn` recognizes it, and `SkiaCamera.StartPasskeySignInAsync(code)` hands it to the system, which shows its own passkey sheet and signs the user in. Your app never sees a key. Call it from a tap. `SkiaCamera.IsPasskeySignInSupported` tells whether the system can take the code: iOS 16 and later for now. See the [Usage Guide](docs/usage-guide.md#passkey-sign-in-codes).
  * iOS: the camera finds QR codes and barcodes in the live preview. Set `CodeDetection` (for example `CameraCodeTypes.Qr`) and listen to `CodesDetected`: every code comes with its text and its corners, and `TryMapPreviewPoint` turns a corner into a position on the canvas. The system's capture pipeline does the detection, so your code reads no frame pixels for it and nothing is added to the render thread. Off by default, and off costs nothing. `SkiaCamera.IsCodeDetectionSupported` tells whether the platform can do it: iOS for now. See the [Usage Guide](docs/usage-guide.md#16-code-detection-qr-and-barcodes).
  * Windows: the camera preview and video recording now run on the GPU (`UseGpuProcessing`, on by default). Frames reach the screen and the encoder without a CPU copy, hardware video encoders are used, and CPU use drops. When the machine can't do it (another GPU, a driver refusing the device) the camera falls back to the previous path by itself, never a black preview. A camera switched on before its canvas first draws still gets the GPU path, and each camera frame takes less work, with its Direct3D surface released right after use.
- * Windows: recordings start with their first frame, the preview stays live while a recording starts, and switching the camera off and on quickly no longer kills the preview.
 
 ## Extending SkiaCamera
 

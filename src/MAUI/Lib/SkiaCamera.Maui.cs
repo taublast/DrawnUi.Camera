@@ -1417,6 +1417,7 @@ public partial class SkiaCamera : SkiaControl
     }
 
     readonly object _lockRestart = new();
+    int _switchRequests;
 
     /// <summary>
     /// A camera flip (Facing, CameraIndex) is one user action: restart at once instead of waiting
@@ -1430,11 +1431,14 @@ public partial class SkiaCamera : SkiaControl
         _restartDebounceTimer?.Dispose();
         _restartDebounceTimer = null;
 
+        var request = Interlocked.Increment(ref _switchRequests);
+
         Task.Run(() =>
         {
             lock (_lockRestart)
             {
-                if (!IsOn || IsDisposing || IsDisposed)
+                // a newer flip queued behind this one applies the final selection: one restart, not two
+                if (request != Volatile.Read(ref _switchRequests) || !IsOn || IsDisposing || IsDisposed)
                     return;
 
                 try

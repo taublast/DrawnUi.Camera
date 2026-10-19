@@ -240,7 +240,7 @@ public partial class SkiaCamera : SkiaControl
         typeof(CaptureModeType),
         typeof(SkiaCamera),
         CaptureModeType.Still,
-        propertyChanged: NeedRestartSoon);
+        propertyChanged: NeedRestart);
 
     /// <summary>
     /// Preview mode: Still or Video. Determines which aspect/format the preview sizing should follow.
@@ -1403,17 +1403,6 @@ public partial class SkiaCamera : SkiaControl
         }
     }
 
-    /// <summary>
-    /// Photo / video is one user action: the same full restart as any setting, but after <see cref="RestartSoonMs"/>
-    /// instead of the whole settling period. Settings set in the same call (VideoStabilization next to CaptureMode)
-    /// still join it.
-    /// </summary>
-    private static void NeedRestartSoon(BindableObject bindable, object oldValue, object newValue)
-    {
-        if (bindable is SkiaCamera camera && camera.IsOn)
-            camera.ScheduleRestartDebounced(RestartSoonMs);
-    }
-
     private static void NeedSwitchCamera(BindableObject bindable, object oldValue, object newValue)
     {
         if (bindable is SkiaCamera camera)
@@ -1491,69 +1480,38 @@ public partial class SkiaCamera : SkiaControl
     /// - First property change: starts 500ms settling timer
     /// - More property changes during settling: timer resets to 500ms (waits for "peace")
     /// - No changes for 500ms: camera restarts once with all accumulated changes
-    /// - A sooner restart already pending (<see cref="RestartSoonMs"/>, photo / video) is never pushed back by
-    ///   changes made with it: they join it
     /// </summary>
-    private void ScheduleRestartDebounced(int delayMs = RestartSettleMs)
+    private void ScheduleRestartDebounced()
     {
+        // Cancel any pending restart (resets the 500ms settling period)
         ClearInternalCache();
+        _restartDebounceTimer?.Dispose();
 
-        lock (_lockRestartDebounce)
+
+        // Schedule restart after 500ms of no property changes
+        // If another property change happens before this fires, it will cancel and reschedule again
+        _restartDebounceTimer = new System.Threading.Timer(_ =>
         {
-            var now = DateTime.UtcNow;
-            var due = now.AddMilliseconds(delayMs);
-            if (_restartDebounceTimer != null && _restartDueUtc < due)
-                due = _restartDueUtc;
-            _restartDueUtc = due;
-
-            // Cancel any pending restart and schedule it again at the due time
-            _restartDebounceTimer?.Dispose();
-
-            System.Threading.Timer timer = null;
-            timer = new System.Threading.Timer(_ =>
+            try
             {
-                // fired: no longer pending, a change from now on schedules a restart of its own
-                lock (_lockRestartDebounce)
+                Debug.WriteLine($"[SkiaCamera] Settings settled, restarting camera");
+                lock (_lockRestart)
                 {
-                    if (ReferenceEquals(_restartDebounceTimer, timer))
-                        _restartDebounceTimer = null;
+                    StopInternal(true);
+                    StartWithPermissionsInternal();
                 }
-
-                try
-                {
-                    Debug.WriteLine($"[SkiaCamera] Settings settled, restarting camera");
-                    lock (_lockRestart)
-                    {
-                        StopInternal(true);
-                        StartWithPermissionsInternal();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[SkiaCamera] Debounced restart failed: {ex.Message}");
-                }
-                finally
-                {
-                    timer?.Dispose();
-                }
-            }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            _restartDebounceTimer = timer;
-
-            var wait = due - now;
-            timer.Change(wait > TimeSpan.Zero ? wait : TimeSpan.Zero, Timeout.InfiniteTimeSpan);
-        }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SkiaCamera] Debounced restart failed: {ex.Message}");
+            }
+            finally
+            {
+                _restartDebounceTimer?.Dispose();
+                _restartDebounceTimer = null;
+            }
+        }, null, TimeSpan.FromMilliseconds(500), Timeout.InfiniteTimeSpan);
     }
-
-    /// <summary>The settling period of a setting change before the camera restarts once with all of them.</summary>
-    private const int RestartSettleMs = 500;
-
-    /// <summary>
-    /// Photo / video: long enough for settings set in the same call to join the restart, short enough not to be seen.
-    /// </summary>
-    private const int RestartSoonMs = 50;
-
-    private readonly object _lockRestartDebounce = new();
-    private DateTime _restartDueUtc;
 
     #endregion
 

@@ -103,7 +103,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             _metalScaler = null;
 
             // Clean up preview texture cache
-            _previewTexture = null;
+            ResetPreviewTexture();
             _previewTextureCache?.Dispose();
             _previewTextureCache = null;
 
@@ -452,10 +452,15 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         }
     }
 
-    // ARTOFFOTO PATTERN: Metal texture cache - create texture ONCE, it auto-updates!
-    // Camera writes to IOSurface pool, our texture view shows new frames automatically
+    // Metal texture cache: the preview texture wraps the pixel buffer frames arrive in (zero-copy) and is
+    // wrapped again when a frame arrives in another buffer (DidOutputSampleBuffer)
     private CVMetalTextureCache _previewTextureCache;
-    private IMTLTexture _previewTexture;  // Created ONCE, accessed from preview thread
+    private IMTLTexture _previewTexture;  // accessed from the preview and recording threads under _lockPreviewTexture
+    private CVMetalTexture _previewCvTexture; // keeps _previewTexture's IOSurface backing valid
+    private IntPtr _previewBuffer;            // the CVPixelBuffer _previewTexture wraps (held by _previewCvTexture)
+
+    [System.Runtime.InteropServices.DllImport(ObjCRuntime.Constants.CoreMediaLibrary)]
+    static extern IntPtr CMSampleBufferGetImageBuffer(IntPtr sbuf); // borrowed while the sample buffer lives
 
     public IMTLTexture PreviewTexture
     {
@@ -2851,12 +2856,17 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     /// </summary>
     private void ResetPreviewTexture()
     {
+        CVMetalTexture previous;
         lock (_lockPreviewTexture)
         {
+            previous = _previewCvTexture;
+            _previewCvTexture = null;
+            _previewBuffer = IntPtr.Zero;
             _previewTexture = null;
             _previewTextureWidth = 0;
             _previewTextureHeight = 0;
         }
+        previous?.Dispose();
         // Flush texture cache to release memory
         _previewTextureCache?.Flush(CVOptionFlags.None);
         System.Diagnostics.Debug.WriteLine("[NativeCameraiOS] Preview texture reset");
@@ -3031,7 +3041,12 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         }
 
         if (FormsControl == null || _isCapturingStill || State != CameraProcessorState.Enabled)
+        {
+            // released now, not at GC: a held buffer stays out of the camera's pool (frames dropped while
+            // switching or capturing a still made the pool rotate and the preview freeze on a stale buffer)
+            sampleBuffer?.Dispose();
             return;
+        }
 
         // Start processing thread if not running
         if (_frameProcessingThread == null)
@@ -3049,96 +3064,83 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         CVPixelBuffer pixelBuffer = null;
         try
         {
-            // ============================================================
-            // Create Metal texture ONCE, then do NOTHING!
-            // The texture auto-updates because camera reuses IOSurface pool.
-            // ============================================================
-            if (_previewTexture == null) //our lill trick we wrap (create _previewTexture) only once, then camera writes directly to it
+            // The preview texture wraps the pixel buffer the frame arrived in. With every buffer released at
+            // once the camera keeps writing the same one, so this wraps about once per session and the texture
+            // shows each new frame; a frame in another buffer (pool rotation, a buffer held a moment, the first
+            // frames of a new device) is wrapped again instead of leaving the preview on a stale one.
+            var imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer.Handle);
+            if (imageBuffer == IntPtr.Zero)
+                return;
+
+            if (imageBuffer != _previewBuffer)
             {
-                // FIRST FRAME ONLY: Create texture cache and texture
-                pixelBuffer = sampleBuffer.GetImageBuffer() as CVPixelBuffer;
-                if (pixelBuffer == null)
+                using var frameBuffer = ObjCRuntime.Runtime.GetINativeObject<CVPixelBuffer>(imageBuffer, false);
+                if (frameBuffer == null)
                     return;
 
-                pixelBuffer.Lock(CVPixelBufferLock.None);
-                try
+                // Initialize Metal device and texture cache
+                if (_metalDevice == null)
                 {
-                    // Initialize Metal device and texture cache
+                    _metalDevice = MTLDevice.SystemDefault;
                     if (_metalDevice == null)
                     {
-                        _metalDevice = MTLDevice.SystemDefault;
-                        if (_metalDevice == null)
-                        {
-                            System.Diagnostics.Debug.WriteLine("[NativeCameraiOS] No Metal device!");
-                            return;
-                        }
-                    }
-
-                    if (_previewTextureCache == null)
-                    {
-                        _previewTextureCache = new CVMetalTextureCache(_metalDevice);
-                        if (_previewTextureCache == null)
-                        {
-                            System.Diagnostics.Debug.WriteLine("[NativeCameraiOS] Failed to create texture cache!");
-                            return;
-                        }
-                    }
-
-                    // Create Metal texture from pixel buffer (zero-copy!)
-                    var width = pixelBuffer.Width;
-                    var height = pixelBuffer.Height;
-                    var cvTexture = _previewTextureCache.TextureFromImage(
-                        pixelBuffer,
-                        MTLPixelFormat.BGRA8Unorm,
-                        width,
-                        height,
-                        0,
-                        out CVReturn error);
-
-                    if (error != CVReturn.Success || cvTexture == null)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[NativeCameraiOS] TextureFromImage failed: {error}");
+                        System.Diagnostics.Debug.WriteLine("[NativeCameraiOS] No Metal device!");
                         return;
                     }
-
-                    lock (_lockPreviewTexture)
-                    {
-                        _previewTexture = cvTexture.Texture;
-                        _previewTextureWidth = (int)width;
-                        _previewTextureHeight = (int)height;
-                    }
-                    // NOTE: cvTexture (CVMetalTexture wrapper) is intentionally NOT disposed here.
-                    // The CVMetalTextureRef must stay alive to keep the IMTLTexture's IOSurface
-                    // backing valid. This is a one-time allocation (first frame only), not per-frame.
-
-                    System.Diagnostics.Debug.WriteLine($"[NativeCameraiOS] Metal texture created ONCE: {width}x{height}");
-
-                    // Recording callback for first frame
-                    if (recordingCallback != null)
-                    {
-                        var presentationTime = sampleBuffer.PresentationTimeStamp;
-                        long timestampNs = (long)(presentationTime.Seconds * 1_000_000_000);
-                        try { recordingCallback(pixelBuffer, timestampNs); } catch { }
-                    }
                 }
-                finally
+
+                if (_previewTextureCache == null)
                 {
-                    pixelBuffer.Unlock(CVPixelBufferLock.None);
+                    _previewTextureCache = new CVMetalTextureCache(_metalDevice);
+                    if (_previewTextureCache == null)
+                    {
+                        System.Diagnostics.Debug.WriteLine("[NativeCameraiOS] Failed to create texture cache!");
+                        return;
+                    }
                 }
+
+                // Create Metal texture from pixel buffer (zero-copy!)
+                var width = frameBuffer.Width;
+                var height = frameBuffer.Height;
+                var cvTexture = _previewTextureCache.TextureFromImage(
+                    frameBuffer,
+                    MTLPixelFormat.BGRA8Unorm,
+                    width,
+                    height,
+                    0,
+                    out CVReturn error);
+
+                if (error != CVReturn.Success || cvTexture == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[NativeCameraiOS] TextureFromImage failed: {error}");
+                    return;
+                }
+
+                // The CVMetalTexture keeps the IOSurface backing valid while the texture is in use: kept
+                // until the next wrap replaces it. Readers that still hold the previous IMTLTexture keep it
+                // alive on their own.
+                CVMetalTexture previous;
+                lock (_lockPreviewTexture)
+                {
+                    previous = _previewCvTexture;
+                    _previewCvTexture = cvTexture;
+                    _previewTexture = cvTexture.Texture;
+                    _previewBuffer = imageBuffer;
+                    _previewTextureWidth = (int)width;
+                    _previewTextureHeight = (int)height;
+                }
+                previous?.Dispose();
             }
-            else
+
+            // Recording callback needs the buffer
+            if (recordingCallback != null)
             {
-                // SUBSEQUENT FRAMES: Just signal new frame - texture auto-updates!
-                // Recording callback still needs the buffer
-                if (recordingCallback != null)
+                pixelBuffer = sampleBuffer.GetImageBuffer() as CVPixelBuffer;
+                if (pixelBuffer != null)
                 {
-                    pixelBuffer = sampleBuffer.GetImageBuffer() as CVPixelBuffer;
-                    if (pixelBuffer != null)
-                    {
-                        var presentationTime = sampleBuffer.PresentationTimeStamp;
-                        long timestampNs = (long)(presentationTime.Seconds * 1_000_000_000);
-                        try { recordingCallback(pixelBuffer, timestampNs); } catch { }
-                    }
+                    var presentationTime = sampleBuffer.PresentationTimeStamp;
+                    long timestampNs = (long)(presentationTime.Seconds * 1_000_000_000);
+                    try { recordingCallback(pixelBuffer, timestampNs); } catch { }
                 }
             }
 

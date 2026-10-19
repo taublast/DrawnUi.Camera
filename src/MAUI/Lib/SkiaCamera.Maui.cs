@@ -240,7 +240,7 @@ public partial class SkiaCamera : SkiaControl
         typeof(CaptureModeType),
         typeof(SkiaCamera),
         CaptureModeType.Still,
-        propertyChanged: NeedRestart);
+        propertyChanged: NeedSwitchCaptureMode);
 
     /// <summary>
     /// Preview mode: Still or Video. Determines which aspect/format the preview sizing should follow.
@@ -1395,6 +1395,8 @@ public partial class SkiaCamera : SkiaControl
     {
         if (bindable is SkiaCamera camera)
         {
+            Interlocked.Increment(ref camera._settingsVersion);
+
             // Only restart if camera is currently on
             if (camera.IsOn)
             {
@@ -1413,6 +1415,20 @@ public partial class SkiaCamera : SkiaControl
         }
     }
 
+    /// <summary>
+    /// Photo / video is one user action like a camera flip: restart at once through the same path, but the
+    /// same device must be set up again (format, stabilization) even when it stays selected.
+    /// </summary>
+    private static void NeedSwitchCaptureMode(BindableObject bindable, object oldValue, object newValue)
+    {
+        if (bindable is SkiaCamera camera)
+        {
+            Interlocked.Increment(ref camera._settingsVersion);
+            Volatile.Write(ref camera._switchReconfigure, 1);
+            NeedSwitchCamera(bindable, oldValue, newValue);
+        }
+    }
+
     void ClearInternalCache()
     {
         _currentVideoFormat = null;
@@ -1420,8 +1436,11 @@ public partial class SkiaCamera : SkiaControl
 
     readonly object _lockRestart = new();
     int _switchRequests;
-    int _selectionVersion; // bumped by every Facing / CameraIndex change
+    int _selectionVersion; // bumped by every Facing / CameraIndex / CaptureMode change
     int _startsInFlight;   // starts between their permission check and the native start returning
+    int _switchReconfigure; // a queued switch must set the device up again even when it stays selected
+    int _settingsVersion;  // bumped by every change that needs the camera set up again
+    int _appliedSettings;  // _settingsVersion the last start or reconfigure read the settings at
 
     /// <summary>
     /// A camera flip (Facing, CameraIndex) is one user action: restart at once instead of waiting
@@ -1436,7 +1455,18 @@ public partial class SkiaCamera : SkiaControl
 
         var request = Interlocked.Increment(ref _switchRequests);
 
-        Task.Run(() =>
+#if ONPLATFORM
+        // set from the UI thread: run after the caller's whole call, so settings it changes together with the
+        // flip or the mode (VideoStabilization next to CaptureMode) are read by this restart too
+        if (MainThread.IsMainThread)
+        {
+            MainThread.BeginInvokeOnMainThread(() => Task.Run(Switch));
+            return;
+        }
+#endif
+        Task.Run(Switch);
+
+        void Switch()
         {
             lock (_lockRestart)
             {
@@ -1453,12 +1483,21 @@ public partial class SkiaCamera : SkiaControl
                     return;
                 }
 
+                var reconfigure = Interlocked.Exchange(ref _switchReconfigure, 0) == 1;
+
                 try
                 {
 #if IOS || MACCATALYST
                     // switch devices inside the running capture session, no StopRunning/StartRunning
-                    if (!Super.InBackground && !IsRecording && !IsPreRecording && NativeControl is NativeCamera apple && apple.SwitchDevice())
+                    var settings = Volatile.Read(ref _settingsVersion);
+                    if (!Super.InBackground && !IsRecording && !IsPreRecording && NativeControl is NativeCamera apple
+                        && apple.SwitchDevice(reconfigure, out var reconfigured))
+                    {
+                        // it read every current setting: a debounced restart scheduled for them has nothing left
+                        if (reconfigured)
+                            Volatile.Write(ref _appliedSettings, settings);
                         return;
+                    }
 #endif
                     StopInternal(true);
                     StartWithPermissionsInternal();
@@ -1468,7 +1507,7 @@ public partial class SkiaCamera : SkiaControl
                     Debug.WriteLine($"[SkiaCamera] Camera switch failed: {ex.Message}");
                 }
             }
-        });
+        }
     }
 
     /// <summary>
@@ -1494,9 +1533,17 @@ public partial class SkiaCamera : SkiaControl
         {
             try
             {
-                Debug.WriteLine($"[SkiaCamera] Settings settled, restarting camera");
                 lock (_lockRestart)
                 {
+                    // an immediate restart (camera flip, photo/video) or a start already read every setting
+                    // changed so far: restarting again would only repeat it
+                    if (Volatile.Read(ref _appliedSettings) == Volatile.Read(ref _settingsVersion))
+                    {
+                        Debug.WriteLine("[SkiaCamera] Settings settled, already applied");
+                        return;
+                    }
+
+                    Debug.WriteLine($"[SkiaCamera] Settings settled, restarting camera");
                     StopInternal(true);
                     StartWithPermissionsInternal();
                 }
@@ -2050,6 +2097,9 @@ public partial class SkiaCamera : SkiaControl
     {
         if (IsDisposing || IsDisposed)
             return;
+
+        // the native start below reads every current setting
+        Volatile.Write(ref _appliedSettings, Volatile.Read(ref _settingsVersion));
 
 #if ONPLATFORM
         if (_mockBitmap != null)

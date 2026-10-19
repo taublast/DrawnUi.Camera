@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 
 namespace DrawnUi.Camera
@@ -191,8 +192,7 @@ namespace DrawnUi.Camera
                             break;
                         case 0x0132:
                             if (stringValue != null &&
-                                DateTime.TryParse(stringValue.Replace(":", "-", StringComparison.InvariantCulture),
-                                    out var dt)) meta.DateTimeOriginal = dt;
+                                TryParseExifDate(stringValue, out var dt)) meta.DateTimeOriginal = dt;
                             break;
                         case 0x8827:
                             if (intValue.HasValue) meta.ISO = intValue;
@@ -205,16 +205,17 @@ namespace DrawnUi.Camera
                             break;
                         case 0x9003:
                             if (stringValue != null &&
-                                DateTime.TryParse(stringValue.Replace(":", "-", StringComparison.InvariantCulture),
-                                    out var dto)) meta.DateTimeOriginal = dto;
+                                TryParseExifDate(stringValue, out var dto)) meta.DateTimeOriginal = dto;
                             break;
                         case 0x9004:
                             if (stringValue != null &&
-                                DateTime.TryParse(stringValue.Replace(":", "-", StringComparison.InvariantCulture),
-                                    out var dtd)) meta.DateTimeDigitized = dtd;
+                                TryParseExifDate(stringValue, out var dtd)) meta.DateTimeDigitized = dtd;
                             break;
                         case 0x920A:
                             if (doubleValue.HasValue) meta.FocalLength = doubleValue;
+                            break;
+                        case 0x9203:
+                            if (doubleValue.HasValue) meta.BrightnessValue = doubleValue;
                             break;
                         case 0x9204:
                             if (doubleValue.HasValue) meta.ExposureBias = doubleValue;
@@ -296,13 +297,13 @@ namespace DrawnUi.Camera
                             if (stringValue != null) meta.GpsLatitudeRef = stringValue;
                             break;
                         case 0x0002:
-                            if (doubleValue.HasValue) meta.GpsLatitude = doubleValue;
+                            meta.GpsLatitude = ReadGpsCoordinate(data, tiffStart, entryPos + 8, type, count, isLittleEndian) ?? meta.GpsLatitude;
                             break;
                         case 0x0003:
                             if (stringValue != null) meta.GpsLongitudeRef = stringValue;
                             break;
                         case 0x0004:
-                            if (doubleValue.HasValue) meta.GpsLongitude = doubleValue;
+                            meta.GpsLongitude = ReadGpsCoordinate(data, tiffStart, entryPos + 8, type, count, isLittleEndian) ?? meta.GpsLongitude;
                             break;
                         case 0x0006:
                             if (doubleValue.HasValue) meta.GpsAltitude = doubleValue;
@@ -463,7 +464,8 @@ namespace DrawnUi.Camera
         private static double? ReadExifDouble(byte[] data, int tiffStart, int valueOffset, int type, int count,
             bool isLittleEndian)
         {
-            if (type == 5) // Rational
+            // 5 = rational, 10 = signed rational (ExposureBias, BrightnessValue)
+            if (type == 5 || type == 10)
             {
                 int actualOffset = tiffStart + ReadUInt32(data, valueOffset, isLittleEndian);
                 if (actualOffset + 8 > data.Length) return null;
@@ -471,10 +473,45 @@ namespace DrawnUi.Camera
                 int numerator = ReadUInt32(data, actualOffset, isLittleEndian);
                 int denominator = ReadUInt32(data, actualOffset + 4, isLittleEndian);
 
-                return denominator != 0 ? (double)numerator / denominator : null;
+                if (denominator == 0) return null;
+                return type == 5 ? (double)(uint)numerator / (uint)denominator : (double)numerator / denominator;
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// GPS latitude / longitude: three rationals, degrees, minutes and seconds
+        /// </summary>
+        private static double? ReadGpsCoordinate(byte[] data, int tiffStart, int valueOffset, int type, int count,
+            bool isLittleEndian)
+        {
+            if (type != 5 || count < 3)
+                return ReadExifDouble(data, tiffStart, valueOffset, type, count, isLittleEndian);
+
+            int actualOffset = tiffStart + ReadUInt32(data, valueOffset, isLittleEndian);
+            if (actualOffset + 24 > data.Length) return null;
+
+            double value = 0;
+            double unit = 1;
+            for (int i = 0; i < 3; i++, unit *= 60)
+            {
+                uint numerator = (uint)ReadUInt32(data, actualOffset + i * 8, isLittleEndian);
+                uint denominator = (uint)ReadUInt32(data, actualOffset + i * 8 + 4, isLittleEndian);
+                if (denominator != 0) // some writers leave unused parts as 0/0
+                    value += (double)numerator / denominator / unit;
+            }
+
+            return value;
+        }
+
+        /// <summary>
+        /// EXIF dates are "yyyy:MM:dd HH:mm:ss", local time without a zone
+        /// </summary>
+        private static bool TryParseExifDate(string value, out DateTime date)
+        {
+            return DateTime.TryParseExact(value.Trim(), "yyyy:MM:dd HH:mm:ss", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out date);
         }
 
         private static int? ReadExifInt(byte[] data, int tiffStart, int valueOffset, int type, int count,
@@ -721,7 +758,7 @@ namespace DrawnUi.Camera
 
             if (meta.DateTimeOriginal.HasValue)
                 entries.Add(new IfdEntry(0x0132, 2,
-                    meta.DateTimeOriginal.Value.ToString("yyyy:MM:dd HH:mm:ss")));
+                    meta.DateTimeOriginal.Value.ToString("yyyy:MM:dd HH:mm:ss", CultureInfo.InvariantCulture)));
 
             if (!string.IsNullOrEmpty(meta.CameraOwnerName))
                 entries.Add(new IfdEntry(0xA430, 2, meta.CameraOwnerName));
@@ -751,11 +788,11 @@ namespace DrawnUi.Camera
 
             if (meta.DateTimeOriginal.HasValue)
                 entries.Add(new IfdEntry(0x9003, 2,
-                    meta.DateTimeOriginal.Value.ToString("yyyy:MM:dd HH:mm:ss")));
+                    meta.DateTimeOriginal.Value.ToString("yyyy:MM:dd HH:mm:ss", CultureInfo.InvariantCulture)));
 
             if (meta.DateTimeDigitized.HasValue)
                 entries.Add(new IfdEntry(0x9004, 2,
-                    meta.DateTimeDigitized.Value.ToString("yyyy:MM:dd HH:mm:ss")));
+                    meta.DateTimeDigitized.Value.ToString("yyyy:MM:dd HH:mm:ss", CultureInfo.InvariantCulture)));
 
             if (meta.Shutter.HasValue)
                 entries.Add(new IfdEntry(0x829A, 5, CreateRational(meta.Shutter.Value)));
@@ -888,7 +925,7 @@ namespace DrawnUi.Camera
             {
                 var time = meta.GpsTimestamp.Value;
                 entries.Add(new IfdEntry(0x0007, 5, CreateGpsTime(time)));
-                entries.Add(new IfdEntry(0x001D, 2, time.ToString("yyyy:MM:dd")));
+                entries.Add(new IfdEntry(0x001D, 2, time.ToString("yyyy:MM:dd", CultureInfo.InvariantCulture)));
             }
 
             return entries.OrderBy(e => e.Tag).ToList();

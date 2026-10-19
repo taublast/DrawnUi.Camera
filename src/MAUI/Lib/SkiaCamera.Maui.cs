@@ -1437,8 +1437,9 @@ public partial class SkiaCamera : SkiaControl
         {
             lock (_lockRestart)
             {
-                // a newer flip queued behind this one applies the final selection: one restart, not two
-                if (request != Volatile.Read(ref _switchRequests) || !IsOn || IsDisposing || IsDisposed)
+                // a newer flip queued behind this one applies the final selection: one restart, not two.
+                // Not skipped when IsOn went false meanwhile, same as the debounced restart (avoids a stuck camera).
+                if (request != Volatile.Read(ref _switchRequests) || IsDisposing || IsDisposed)
                     return;
 
                 try

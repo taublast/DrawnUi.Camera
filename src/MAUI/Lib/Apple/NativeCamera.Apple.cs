@@ -1480,25 +1480,17 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     /// frame of the previous device reaches consumers after On.
     /// Returns false when the session is not running, the caller then does a full restart.
     /// </summary>
-    /// <param name="reconfigure">Set the device up again even when it stays selected (capture mode changed).</param>
-    /// <param name="reconfigured">The session was set up again, reading every current setting.</param>
-    public bool SwitchDevice(bool reconfigure, out bool reconfigured)
+    public bool SwitchDevice()
     {
-        reconfigured = false;
         lock (lockSetup)
         {
             if (State != CameraProcessorState.Enabled || !_session.Running)
                 return false;
 
             // a start that was in flight already opened the selected device: no second Off/On
-            if (!reconfigure)
-            {
-                var selected = SelectVideoDevice();
-                if (selected != null && selected.UniqueID == _deviceInput?.Device?.UniqueID)
-                    return true;
-            }
-
-            reconfigured = true;
+            var selected = SelectVideoDevice();
+            if (selected != null && selected.UniqueID == _deviceInput?.Device?.UniqueID)
+                return true;
 
             // Off first: the sample buffer delegate drops every frame until On
             State = CameraProcessorState.None;

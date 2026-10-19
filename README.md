@@ -28,18 +28,13 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.92
+## What's New  1.10.7.91
 
- * Faster camera switch: changing `Facing`, `CameraIndex` or `CaptureMode` (photo / video) restarts the camera at once, instead of after the 500 ms settling wait that other settings still use, and quick repeated changes restart it only once. On iOS and Mac Catalyst the switch happens inside the running capture session when nothing is recording.
- * Start and stop: switching cameras while the camera is still starting no longer leaves it dead on iOS, and the camera never starts while the app is in the background: it starts, with the permission check, when the app comes back.
- * iOS: the library releases the shared audio session when it stops using audio, so app haptics, system sounds and other apps' audio come back after video mode or a recording.
- * `TakePicture` with the camera off, or during another capture, raises `CaptureFailed` instead of waiting forever, and a failed recording stop raises `RecordingFailed` once.
- * Photo and video metadata: dates, exposure bias, brightness and GPS minutes and seconds are no longer lost or shifted, also on phones set to a language with a decimal comma, and video dates are written in UTC.
- * iOS: no more crash when the preview scaler is disposed while a frame readback is still running, and after a switch the first ML frame (`TryGetRgba`) comes from the new camera.
+ * Built on DrawnUi 1.10.7.9 (`DrawnUi.Maui` / `DrawnUi.Net`), with its fixes: switching input off works the same on every control, a drawer no longer stops halfway, no more cut text at in-between screen scales, and `SafeAction` runs on time.
 
 ## Previously 
 
- * Built on DrawnUi 1.10.7.9 (`DrawnUi.Maui` / `DrawnUi.Net`), with its fixes: switching input off works the same on every control, a drawer no longer stops halfway, no more cut text at in-between screen scales, and `SafeAction` runs on time. Before that, DrawnUi 1.10.7.8 brought the iOS fix for one caret when switching between fields in different canvases.
+ * Built on DrawnUi 1.10.7.8, with its iOS fix for one caret when switching between fields in different canvases.
  * iOS: photos are taken with `AVCapturePhotoOutput`, with settings per shot (flash, quality). At `Max` quality, iPhones with a 48 MP camera now take full 48 MP photos (12 MP before).
  * iOS: photos carry the date they were taken (`DateTimeOriginal`, with the time zone offset).
  * MAUI: rendering and saving a captured photo makes fewer full-size copies, so a 48 MP photo needs less memory at its peak (about 1.5 GB instead of 2.0 GB).

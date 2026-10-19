@@ -2647,7 +2647,14 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     public void TakePicture()
     {
         if (_isCapturingStill || _mediaCapture == null)
+        {
+            // report it, or TakePicture never completes
+            var busy = new InvalidOperationException(_mediaCapture == null
+                ? "the camera is off"
+                : "a picture is already being taken");
+            MainThread.BeginInvokeOnMainThread(() => StillImageCaptureFailed?.Invoke(busy));
             return;
+        }
 
         _isCapturingStill = true;
 

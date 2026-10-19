@@ -2507,33 +2507,44 @@ public partial class SkiaCamera : SkiaControl
 
         IsBusy = true;
 
-        if (_mockBitmap != null)
+        try
         {
-            await MainThread.InvokeOnMainThreadAsync(TakeMockPicture);
-            IsBusy = false;
-            return;
+            if (_mockBitmap != null)
+            {
+                await MainThread.InvokeOnMainThreadAsync(TakeMockPicture);
+                return;
+            }
+
+            var native = NativeControl;
+            if (native == null)
+            {
+                OnCaptureFailed(new InvalidOperationException("the camera is off"));
+                return;
+            }
+
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            native.StillImageCaptureFailed = ex =>
+            {
+                OnCaptureFailed(ex);
+                tcs.TrySetResult(false);
+            };
+
+            native.StillImageCaptureSuccess = captured =>
+            {
+                CapturedStillImage = captured;
+                OnCaptureSuccess(captured);
+                tcs.TrySetResult(true);
+            };
+
+            native.TakePicture();
+
+            await tcs.Task;
         }
-
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        NativeControl.StillImageCaptureFailed = ex =>
+        finally
         {
-            OnCaptureFailed(ex);
-            tcs.TrySetResult(false);
-        };
-
-        NativeControl.StillImageCaptureSuccess = captured =>
-        {
-            CapturedStillImage = captured;
-            OnCaptureSuccess(captured);
-            tcs.TrySetResult(true);
-        };
-
-        NativeControl.TakePicture();
-
-        await tcs.Task;
-
-        IsBusy = false;
+            IsBusy = false;
+        }
     }
 
     /// <summary>

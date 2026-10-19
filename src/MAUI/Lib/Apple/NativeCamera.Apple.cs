@@ -3889,6 +3889,13 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         bool audioSessionReady = false;
         if (_recordAudio)
         {
+            // released by CleanupMovieFileOutput, or below when the microphone is not available
+            if (!_movieAudioClaimed)
+            {
+                AppleAudioSession.Claim();
+                _movieAudioClaimed = true;
+            }
+
             try
             {
                 var audioSession = AVAudioSession.SharedInstance();
@@ -3938,6 +3945,9 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 Debug.WriteLine("[NativeCamera.Apple] Cannot access microphone. Recording video without audio.");
                 _recordAudio = false;
             }
+
+            if (!audioSessionReady)
+                ReleaseMovieAudioSession();
         }
 
         _session.BeginConfiguration();
@@ -4429,6 +4439,20 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         catch (Exception ex)
         {
             Debug.WriteLine($"[NativeCamera.Apple] Error cleaning up movie file output: {ex.Message}");
+        }
+
+        ReleaseMovieAudioSession();
+    }
+
+    private bool _movieAudioClaimed;
+
+    /// <summary>The movie output's claim on the shared audio session, taken in SetupMovieFileOutput.</summary>
+    private void ReleaseMovieAudioSession()
+    {
+        if (_movieAudioClaimed)
+        {
+            _movieAudioClaimed = false;
+            AppleAudioSession.Release();
         }
     }
 

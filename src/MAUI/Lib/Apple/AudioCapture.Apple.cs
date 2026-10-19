@@ -89,6 +89,9 @@ public class AudioCaptureApple : IAudioCapture
 
     private volatile bool _disposed;
 
+    /// <summary>This instance holds a claim on the shared audio session (<see cref="AppleAudioSession"/>).</summary>
+    private bool _sessionClaimed;
+
     public async Task<bool> StartAsync(int sampleRate = 44100, int channels = 1,
                                         AudioBitDepth bitDepth = AudioBitDepth.Pcm16Bit, int deviceIndex = -1)
     {
@@ -135,7 +138,12 @@ public class AudioCaptureApple : IAudioCapture
                     return false;
                 }
 
-                // Configure audio session for recording
+                // Configure audio session for recording; released by Cleanup
+                if (!_sessionClaimed)
+                {
+                    AppleAudioSession.Claim();
+                    _sessionClaimed = true;
+                }
                 var audioSession = AVAudioSession.SharedInstance();
                 NSError sessionError;
                 audioSession.SetCategory(AVAudioSessionCategory.PlayAndRecord,
@@ -379,6 +387,13 @@ public class AudioCaptureApple : IAudioCapture
             catch (Exception ex)
             {
                 Debug.WriteLine($"[AudioCaptureApple] Cleanup error: {ex.Message}");
+            }
+
+            // after the engine stopped: the last user deactivates the session and restores the app's
+            if (_sessionClaimed)
+            {
+                _sessionClaimed = false;
+                AppleAudioSession.Release();
             }
         }
     }

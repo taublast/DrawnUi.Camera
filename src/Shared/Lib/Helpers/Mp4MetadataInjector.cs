@@ -239,8 +239,9 @@ public static class Mp4MetadataInjector
         if (!string.IsNullOrEmpty(meta.Model))
             atoms[Atom_Model] = meta.Model;
 
-        if (meta.DateTimeOriginal.HasValue)
-            atoms[Atom_Date] = meta.DateTimeOriginal.Value.ToString("yyyy-MM-ddTHH:mm:ssZ");
+        if (meta.DateTimeOriginal.HasValue) // "Z" means UTC: convert the local capture time first
+            atoms[Atom_Date] = meta.DateTimeOriginal.Value.ToUniversalTime()
+                .ToString("yyyy-MM-ddTHH:mm:ssZ", System.Globalization.CultureInfo.InvariantCulture);
 
         if (!string.IsNullOrEmpty(meta.UserComment))
             atoms[Atom_Comment] = meta.UserComment;
@@ -280,7 +281,8 @@ public static class Mp4MetadataInjector
         if (atoms.TryGetValue(Atom_Model, out var model))
             meta.Model = model;
 
-        if (atoms.TryGetValue(Atom_Date, out var dateStr) && DateTime.TryParse(dateStr, out var date))
+        if (atoms.TryGetValue(Atom_Date, out var dateStr) && DateTime.TryParse(dateStr,
+                System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date)) // back to local time
             meta.DateTimeOriginal = date;
 
         if (atoms.TryGetValue(Atom_Comment, out var comment))
@@ -1013,7 +1015,7 @@ public static class Mp4MetadataInjector
     {
         var latSign = latitude >= 0 ? "+" : "";
         var lonSign = longitude >= 0 ? "+" : "";
-        return $"{latSign}{latitude:F4}{lonSign}{longitude:F4}/";
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{latSign}{latitude:F4}{lonSign}{longitude:F4}/");
     }
 
     private static bool ParseIso6709(string iso6709, out double latitude, out double longitude)

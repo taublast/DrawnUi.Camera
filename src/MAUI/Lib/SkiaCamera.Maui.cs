@@ -1446,7 +1446,7 @@ public partial class SkiaCamera : SkiaControl
                 {
 #if IOS || MACCATALYST
                     // switch devices inside the running capture session, no StopRunning/StartRunning
-                    if (!IsRecording && !IsPreRecording && NativeControl is NativeCamera apple && apple.SwitchDevice())
+                    if (!Super.InBackground && !IsRecording && !IsPreRecording && NativeControl is NativeCamera apple && apple.SwitchDevice())
                         return;
 #endif
                     StopInternal(true);
@@ -1930,6 +1930,14 @@ public partial class SkiaCamera : SkiaControl
             Super.OnNativeAppPaused += Super_OnNativeAppPaused;
 
             ClearInternalCache();
+
+            // never start the hardware while the app is hidden (a pending restart, IsOn set meanwhile):
+            // resume starts it when IsOn (ResumeIfNeeded)
+            if (Super.InBackground)
+            {
+                Debug.WriteLine("[SkiaCamera] Start skipped: app in background");
+                return;
+            }
 
             try
             {

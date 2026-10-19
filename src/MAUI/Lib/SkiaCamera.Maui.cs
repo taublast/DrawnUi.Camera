@@ -1405,9 +1405,11 @@ public partial class SkiaCamera : SkiaControl
 
     private static void NeedSwitchCamera(BindableObject bindable, object oldValue, object newValue)
     {
-        if (bindable is SkiaCamera camera && camera.IsOn)
+        if (bindable is SkiaCamera camera)
         {
-            camera.SwitchCameraNow();
+            Interlocked.Increment(ref camera._selectionVersion);
+            if (camera.IsOn)
+                camera.SwitchCameraNow();
         }
     }
 
@@ -1418,18 +1420,19 @@ public partial class SkiaCamera : SkiaControl
 
     readonly object _lockRestart = new();
     int _switchRequests;
+    int _selectionVersion; // bumped by every Facing / CameraIndex change
+    int _startsInFlight;   // starts between their permission check and the native start returning
 
     /// <summary>
     /// A camera flip (Facing, CameraIndex) is one user action: restart at once instead of waiting
-    /// for the settling period, replacing a pending debounced restart. Runs on a pool thread like the
-    /// debounced restart; quick repeated flips are serialized and the last selection wins.
+    /// for the settling period. Runs on a pool thread like the debounced restart, serialized with it;
+    /// quick repeated flips are serialized and the last selection wins. A pending debounced settings
+    /// restart is kept: a flip that finds the selected camera already open changes nothing.
     /// Consumers see the same StateChanged Off then On as for any restart.
     /// </summary>
     private void SwitchCameraNow()
     {
         ClearInternalCache();
-        _restartDebounceTimer?.Dispose();
-        _restartDebounceTimer = null;
 
         var request = Interlocked.Increment(ref _switchRequests);
 
@@ -1441,6 +1444,14 @@ public partial class SkiaCamera : SkiaControl
                 // Not skipped when IsOn went false meanwhile, same as the debounced restart (avoids a stuck camera).
                 if (request != Volatile.Read(ref _switchRequests) || IsDisposing || IsDisposed)
                     return;
+
+                // a start in flight opens the selected camera itself, or switches once right after it opened
+                // the previous one (StartWithPermissionsInternal): stopping it here raced its open
+                if (Volatile.Read(ref _startsInFlight) > 0)
+                {
+                    Debug.WriteLine("[SkiaCamera] Switch left to the start in flight");
+                    return;
+                }
 
                 try
                 {
@@ -1955,22 +1966,46 @@ public partial class SkiaCamera : SkiaControl
                 }
             }
 
+            bool counted = false;
             try
             {
                 Debug.WriteLine("[SkiaCamera] Requesting permissions...");
                 var request = NeedPermissionsSet;
                 if (_mockBitmap != null)
                     request &= ~NeedPermissions.Camera; // a mock source needs no camera
+                Interlocked.Increment(ref _startsInFlight);
+                counted = true;
                 CheckPermissions(() =>
                     {
                         Debug.WriteLine("[SkiaCamera] Starting..");
                         PermissionsWarning = false;
                         PermissionsError = false;
                         OnPermissionsResultChanged(true);
-                        StartInternal();
+
+                        var selection = Volatile.Read(ref _selectionVersion);
+                        try
+                        {
+                            StartInternal();
+                        }
+                        catch (Exception e)
+                        {
+                            Trace.WriteLine(e);
+                        }
+                        finally
+                        {
+                            Interlocked.Decrement(ref _startsInFlight);
+                        }
+
+                        // a camera picked while this start was opening the previous one: switch once now
+                        if (Volatile.Read(ref _selectionVersion) != selection)
+                        {
+                            Debug.WriteLine("[SkiaCamera] Camera selection changed during the start: switching");
+                            SwitchCameraNow();
+                        }
                     },
                     () =>
                     {
+                        Interlocked.Decrement(ref _startsInFlight);
                         Super.Log("[SkiaCamera] Permissions denied");
                         IsOn = false;
                         PermissionsWarning = true;
@@ -1980,6 +2015,8 @@ public partial class SkiaCamera : SkiaControl
             }
             catch (Exception e)
             {
+                if (counted)
+                    Interlocked.Decrement(ref _startsInFlight); // CheckPermissions never scheduled its callbacks
                 Trace.WriteLine(e);
             }
         }

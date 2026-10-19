@@ -612,6 +612,68 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         }
     }
 
+    /// <summary>
+    /// The device that Facing / CameraIndex / Type select now, null when none exists.
+    /// </summary>
+    private AVCaptureDevice SelectVideoDevice()
+    {
+        AVCaptureDevice videoDevice = null;
+
+        // Manual camera selection using same discovery session as GetAvailableCamerasPlatform
+        if (FormsControl.Facing == CameraPosition.Manual && FormsControl.CameraIndex >= 0)
+        {
+            var discoverySession = AVCaptureDeviceDiscoverySession.Create(
+                SkiaCamera.GetDiscoveryDeviceTypes(),
+                AVMediaTypes.Video,
+                AVCaptureDevicePosition.Unspecified);
+
+            var allDevices = discoverySession.Devices;
+            if (FormsControl.CameraIndex < allDevices.Length)
+            {
+                videoDevice = allDevices[FormsControl.CameraIndex];
+                Console.WriteLine($"[NativeCameraApple] Selected camera by index {FormsControl.CameraIndex}: {videoDevice.LocalizedName}");
+            }
+            else
+            {
+                Console.WriteLine($"[NativeCameraApple] Invalid camera index {FormsControl.CameraIndex} (have {allDevices.Length} devices), falling back to default");
+                videoDevice = allDevices.FirstOrDefault();
+            }
+        }
+        else
+        {
+            // Automatic selection based on facing
+            var cameraPosition = FormsControl.Facing == CameraPosition.Selfie
+                ? AVCaptureDevicePosition.Front
+                : AVCaptureDevicePosition.Back;
+
+            if (UIDevice.CurrentDevice.CheckSystemVersion(13, 0) && FormsControl.Type == CameraType.Max)
+            {
+                videoDevice = AVCaptureDevice.GetDefaultDevice(AVCaptureDeviceType.BuiltInTripleCamera, AVMediaTypes.Video, cameraPosition);
+            }
+
+            if (videoDevice == null)
+            {
+                if (UIDevice.CurrentDevice.CheckSystemVersion(10, 2) && FormsControl.Type == CameraType.Max)
+                {
+                    videoDevice = AVCaptureDevice.GetDefaultDevice(AVCaptureDeviceType.BuiltInDualCamera, AVMediaTypes.Video, cameraPosition);
+                }
+
+                if (videoDevice == null)
+                {
+                    var videoDevices = AVCaptureDevice.DevicesWithMediaType(AVMediaTypes.Video.GetConstant());
+
+#if MACCATALYST
+                videoDevice = videoDevices.FirstOrDefault();
+#else
+                    videoDevice = videoDevices.FirstOrDefault(d => d.Position == cameraPosition);
+#endif
+                }
+            }
+        }
+
+        return videoDevice;
+    }
+
     object lockSetup = new();
 
     private void SetupHardware()
@@ -631,63 +693,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 // which prevents low-light auto-exposure from lowering FPS.
                 _session.SessionPreset = AVCaptureSession.PresetInputPriority;
 
-                AVCaptureDevice videoDevice = null;
-
-                // Manual camera selection using same discovery session as GetAvailableCamerasPlatform
-                if (FormsControl.Facing == CameraPosition.Manual && FormsControl.CameraIndex >= 0)
+                var videoDevice = SelectVideoDevice();
+                if (videoDevice == null)
                 {
-                    var discoverySession = AVCaptureDeviceDiscoverySession.Create(
-                        SkiaCamera.GetDiscoveryDeviceTypes(),
-                        AVMediaTypes.Video,
-                        AVCaptureDevicePosition.Unspecified);
-
-                    var allDevices = discoverySession.Devices;
-                    if (FormsControl.CameraIndex < allDevices.Length)
-                    {
-                        videoDevice = allDevices[FormsControl.CameraIndex];
-                        Console.WriteLine($"[NativeCameraApple] Selected camera by index {FormsControl.CameraIndex}: {videoDevice.LocalizedName}");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[NativeCameraApple] Invalid camera index {FormsControl.CameraIndex} (have {allDevices.Length} devices), falling back to default");
-                        videoDevice = allDevices.FirstOrDefault();
-                    }
-                }
-                else
-                {
-                    // Automatic selection based on facing
-                    var cameraPosition = FormsControl.Facing == CameraPosition.Selfie
-                        ? AVCaptureDevicePosition.Front
-                        : AVCaptureDevicePosition.Back;
-
-                    if (UIDevice.CurrentDevice.CheckSystemVersion(13, 0) && FormsControl.Type == CameraType.Max)
-                    {
-                        videoDevice = AVCaptureDevice.GetDefaultDevice(AVCaptureDeviceType.BuiltInTripleCamera, AVMediaTypes.Video, cameraPosition);
-                    }
-
-                    if (videoDevice == null)
-                    {
-                        if (UIDevice.CurrentDevice.CheckSystemVersion(10, 2) && FormsControl.Type == CameraType.Max)
-                        {
-                            videoDevice = AVCaptureDevice.GetDefaultDevice(AVCaptureDeviceType.BuiltInDualCamera, AVMediaTypes.Video, cameraPosition);
-                        }
-
-                        if (videoDevice == null)
-                        {
-                            var videoDevices = AVCaptureDevice.DevicesWithMediaType(AVMediaTypes.Video.GetConstant());
-
-#if MACCATALYST
-                        videoDevice = videoDevices.FirstOrDefault();
-#else
-                            videoDevice = videoDevices.FirstOrDefault(d => d.Position == cameraPosition);
-#endif
-                            if (videoDevice == null)
-                            {
-                                State = CameraProcessorState.Error;
-                                return;
-                            }
-                        }
-                    }
+                    State = CameraProcessorState.Error;
+                    return;
                 }
 
                 var allFormats = videoDevice.Formats.ToList();
@@ -1438,6 +1448,9 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
         lock (lockSetup)
         {
+            if (State == CameraProcessorState.Enabled && _session.Running)
+                return; // started meanwhile by the start or switch this one waited for
+
             try
             {
                 Setup();
@@ -1473,6 +1486,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         {
             if (State != CameraProcessorState.Enabled || !_session.Running)
                 return false;
+
+            // a start that was in flight already opened the selected device: no second Off/On
+            var selected = SelectVideoDevice();
+            if (selected != null && selected.UniqueID == _deviceInput?.Device?.UniqueID)
+                return true;
 
             // Off first: the sample buffer delegate drops every frame until On
             State = CameraProcessorState.None;
@@ -1521,55 +1539,60 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
     public void Stop(bool force = false)
     {
-        // Stop frame processing thread first
-        StopFrameProcessingThread();
-
-        SetCapture(null);
-
-        // Clear raw frame data
-        lock (_lockRawFrame)
+        // same lock as Start, SetupHardware and SwitchDevice: a stop never lands in the middle of an
+        // open session configuration (stopRunning there left the session dead in Error)
+        lock (lockSetup)
         {
-            _latestRawFrame?.Dispose();
-            _latestRawFrame = null;
-        }
+            // Stop frame processing thread first
+            StopFrameProcessingThread();
 
+            SetCapture(null);
 
-        if (State == CameraProcessorState.None && !force)
-            return;
-
-        if (State != CameraProcessorState.Enabled && !force)
-        {
-            State = CameraProcessorState.None;
-            return; //avoid spam
-        }
-
-        try
-        {
-            _exposureObserver?.Dispose();
-            _exposureObserver = null;
-            if (FormsControl != null)
-                FormsControl.IsAdjustingExposure = false;
-
-            _session.StopRunning();
-
-            State = CameraProcessorState.None;
-
-            // consumers clear their overlays on camera flip / restart
-            if (_codesReported)
+            // Clear raw frame data
+            lock (_lockRawFrame)
             {
-                _codesReported = false;
-                FormsControl?.RaiseCodesDetected(Array.Empty<DetectedCode>());
+                _latestRawFrame?.Dispose();
+                _latestRawFrame = null;
             }
 
-            MainThread.BeginInvokeOnMainThread(() =>
+
+            if (State == CameraProcessorState.None && !force)
+                return;
+
+            if (State != CameraProcessorState.Enabled && !force)
             {
-                DeviceDisplay.Current.KeepScreenOn = false;
-            });
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine($"[NativeCameraiOS] Stop error: {e}");
-            State = CameraProcessorState.Error;
+                State = CameraProcessorState.None;
+                return; //avoid spam
+            }
+
+            try
+            {
+                _exposureObserver?.Dispose();
+                _exposureObserver = null;
+                if (FormsControl != null)
+                    FormsControl.IsAdjustingExposure = false;
+
+                _session.StopRunning();
+
+                State = CameraProcessorState.None;
+
+                // consumers clear their overlays on camera flip / restart
+                if (_codesReported)
+                {
+                    _codesReported = false;
+                    FormsControl?.RaiseCodesDetected(Array.Empty<DetectedCode>());
+                }
+
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    DeviceDisplay.Current.KeepScreenOn = false;
+                });
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[NativeCameraiOS] Stop error: {e}");
+                State = CameraProcessorState.Error;
+            }
         }
     }
 

@@ -1977,22 +1977,28 @@ public partial class SkiaCamera : SkiaControl
                 counted = true;
                 CheckPermissions(() =>
                     {
-                        Debug.WriteLine("[SkiaCamera] Starting..");
-                        PermissionsWarning = false;
-                        PermissionsError = false;
-                        OnPermissionsResultChanged(true);
-
-                        var selection = Volatile.Read(ref _selectionVersion);
+                        var selection = 0;
                         try
                         {
-                            StartInternal();
-                        }
-                        catch (Exception e)
-                        {
-                            Trace.WriteLine(e);
+                            Debug.WriteLine("[SkiaCamera] Starting..");
+                            PermissionsWarning = false;
+                            PermissionsError = false;
+                            OnPermissionsResultChanged(true);
+
+                            selection = Volatile.Read(ref _selectionVersion);
+                            try
+                            {
+                                StartInternal();
+                            }
+                            catch (Exception e)
+                            {
+                                Trace.WriteLine(e);
+                            }
                         }
                         finally
                         {
+                            // whatever throws above (a PermissionsResult handler too): a leaked count would leave
+                            // every later flip "to the start in flight"
                             Interlocked.Decrement(ref _startsInFlight);
                         }
 

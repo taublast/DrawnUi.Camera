@@ -2660,7 +2660,7 @@ public partial class SkiaCamera
                 StartPreviewAudioCapture();
             }
 
-            RecordingFailed?.Invoke(this, ex);
+            // RecordingFailed is raised once, by the StopVideoRecording catch this rethrows to
             throw;
         }
         finally

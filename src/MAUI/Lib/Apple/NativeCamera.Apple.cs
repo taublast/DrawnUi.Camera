@@ -1461,6 +1461,64 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         }
     }
 
+    /// <summary>
+    /// Switches to the device selected by Facing/CameraIndex inside the running session,
+    /// skipping StopRunning/StartRunning. Raises the same Off then On as a restart, and no
+    /// frame of the previous device reaches consumers after On.
+    /// Returns false when the session is not running, the caller then does a full restart.
+    /// </summary>
+    public bool SwitchDevice()
+    {
+        lock (lockSetup)
+        {
+            if (State != CameraProcessorState.Enabled || !_session.Running)
+                return false;
+
+            // Off first: the sample buffer delegate drops every frame until On
+            State = CameraProcessorState.None;
+
+            StopFrameProcessingThread();
+            SetCapture(null);
+            lock (_lockRawFrame)
+            {
+                _latestRawFrame?.Dispose();
+                _latestRawFrame = null;
+            }
+
+            _exposureObserver?.Dispose();
+            _exposureObserver = null;
+            if (FormsControl != null)
+                FormsControl.IsAdjustingExposure = false;
+
+            // consumers clear their overlays on camera flip / restart
+            if (_codesReported)
+            {
+                _codesReported = false;
+                FormsControl?.RaiseCodesDetected(Array.Empty<DetectedCode>());
+            }
+
+            try
+            {
+                SetupHardware();
+                if (State == CameraProcessorState.Error)
+                    return true;
+
+                // buffers of the previous device already queued run (and are dropped) before On
+                _videoDataOutputQueue.DispatchSync(() => { });
+
+                State = CameraProcessorState.Enabled;
+                ApplyFlashMode();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[NativeCameraiOS] SwitchDevice error: {e}");
+                State = CameraProcessorState.Error;
+            }
+
+            return true;
+        }
+    }
+
     public void Stop(bool force = false)
     {
         // Stop frame processing thread first

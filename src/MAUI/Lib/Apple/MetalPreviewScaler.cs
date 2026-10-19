@@ -474,19 +474,39 @@ namespace DrawnUi.Camera
                 blitEncoder.EndEncoding();
 
                 // Signal completion for this slot via handler (runs on Metal callback thread)
+                // Runs on com.Metal.CompletionQueueDispatch, where an exception aborts the app. The scaler
+                // can be disposed while this buffer is in flight: Dispose takes the same lock, so the copy
+                // either completes before the slot resources are freed or sees them gone and skips.
+                var semaphore = _gpuSemaphore;
                 commandBuffer.AddCompletedHandler((_) =>
                 {
-                    // Copy bytes from GPU texture to pinned buffer (texture is complete now)
-                    unsafe
+                    try
                     {
-                        _asyncOutputTextures[writeSlot].GetBytes(
-                            _asyncBufferPins[writeSlot].AddrOfPinnedObject(),
-                            (nuint)(_outputWidth * 4),
-                            region,
-                            0);
+                        lock (_asyncLock)
+                        {
+                            if (_asyncOutputTextures == null || _asyncBufferPins == null)
+                                return;
+
+                            // Copy bytes from GPU texture to pinned buffer (texture is complete now)
+                            unsafe
+                            {
+                                _asyncOutputTextures[writeSlot].GetBytes(
+                                    _asyncBufferPins[writeSlot].AddrOfPinnedObject(),
+                                    (nuint)(_outputWidth * 4),
+                                    region,
+                                    0);
+                            }
+                            _asyncPreviousReady = true;
+                        }
                     }
-                    _asyncPreviousReady = true;
-                    _gpuSemaphore.Release();
+                    catch (Exception e)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[MetalPreviewScaler] completion error: {e.Message}");
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
                 });
 
                 commandBuffer.Commit();
@@ -633,26 +653,29 @@ namespace DrawnUi.Camera
             _outputTexture?.Dispose();
             _outputTexture = null;
 
-            // Dispose async double-buffer resources
-            if (_asyncOutputTextures != null)
+            // Dispose async double-buffer resources, under the lock an in-flight completion handler copies with
+            lock (_asyncLock)
             {
-                for (int i = 0; i < _asyncOutputTextures.Length; i++)
+                if (_asyncOutputTextures != null)
                 {
-                    _asyncOutputTextures[i]?.Dispose();
-                    _asyncOutputTextures[i] = null;
+                    for (int i = 0; i < _asyncOutputTextures.Length; i++)
+                    {
+                        _asyncOutputTextures[i]?.Dispose();
+                        _asyncOutputTextures[i] = null;
+                    }
+                    _asyncOutputTextures = null;
                 }
-                _asyncOutputTextures = null;
-            }
-            if (_asyncBufferPins != null)
-            {
-                for (int i = 0; i < _asyncBufferPins.Length; i++)
+                if (_asyncBufferPins != null)
                 {
-                    if (_asyncBufferPins[i].IsAllocated)
-                        _asyncBufferPins[i].Free();
+                    for (int i = 0; i < _asyncBufferPins.Length; i++)
+                    {
+                        if (_asyncBufferPins[i].IsAllocated)
+                            _asyncBufferPins[i].Free();
+                    }
+                    _asyncBufferPins = null;
                 }
-                _asyncBufferPins = null;
+                _asyncReadbackBuffers = null;
             }
-            _asyncReadbackBuffers = null;
 
             _textureCache?.Dispose();
             _textureCache = null;

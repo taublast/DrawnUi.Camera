@@ -735,10 +735,7 @@ public partial class SkiaCamera : SkiaControl
         typeof(CameraPosition),
         typeof(SkiaCamera),
         CameraPosition.Default,
-        propertyChanged: (bindable, value, newValue) =>
-        {
-            NeedRestart(bindable, value, newValue);
-        });
+        propertyChanged: NeedSwitchCamera);
 
     /// <summary>
     /// Gets or sets which camera position should be used for preview and capture.
@@ -754,7 +751,7 @@ public partial class SkiaCamera : SkiaControl
         typeof(int),
         typeof(SkiaCamera),
         -1,
-        propertyChanged: NeedRestart);
+        propertyChanged: NeedSwitchCamera);
 
     /// <summary>
     /// Index of camera to use when Facing is Manual
@@ -1406,9 +1403,56 @@ public partial class SkiaCamera : SkiaControl
         }
     }
 
+    private static void NeedSwitchCamera(BindableObject bindable, object oldValue, object newValue)
+    {
+        if (bindable is SkiaCamera camera && camera.IsOn)
+        {
+            camera.SwitchCameraNow();
+        }
+    }
+
     void ClearInternalCache()
     {
         _currentVideoFormat = null;
+    }
+
+    readonly object _lockRestart = new();
+
+    /// <summary>
+    /// A camera flip (Facing, CameraIndex) is one user action: restart at once instead of waiting
+    /// for the settling period, replacing a pending debounced restart. Runs on a pool thread like the
+    /// debounced restart; quick repeated flips are serialized and the last selection wins.
+    /// Consumers see the same StateChanged Off then On as for any restart.
+    /// </summary>
+    private void SwitchCameraNow()
+    {
+        ClearInternalCache();
+        _restartDebounceTimer?.Dispose();
+        _restartDebounceTimer = null;
+
+        Task.Run(() =>
+        {
+            lock (_lockRestart)
+            {
+                if (!IsOn || IsDisposing || IsDisposed)
+                    return;
+
+                try
+                {
+#if IOS || MACCATALYST
+                    // switch devices inside the running capture session, no StopRunning/StartRunning
+                    if (!IsRecording && !IsPreRecording && NativeControl is NativeCamera apple && apple.SwitchDevice())
+                        return;
+#endif
+                    StopInternal(true);
+                    StartWithPermissionsInternal();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[SkiaCamera] Camera switch failed: {ex.Message}");
+                }
+            }
+        });
     }
 
     /// <summary>
@@ -1435,8 +1479,11 @@ public partial class SkiaCamera : SkiaControl
             try
             {
                 Debug.WriteLine($"[SkiaCamera] Settings settled, restarting camera");
-                StopInternal(true);
-                StartWithPermissionsInternal();
+                lock (_lockRestart)
+                {
+                    StopInternal(true);
+                    StartWithPermissionsInternal();
+                }
             }
             catch (Exception ex)
             {

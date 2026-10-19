@@ -60,6 +60,7 @@ public partial class SkiaCamera
     private MetalPreviewScaler _mlScaler;
     private int _mlScalerTargetWidth;
     private int _mlScalerTargetHeight;
+    private CameraUnit _mlScalerDevice; // a new unit per device setup: restart or switch
 
     // Streaming audio writer for OOM-safe live recording (audio goes to file, not memory)
     private AVAssetWriter _liveAudioWriter;
@@ -4005,7 +4006,10 @@ public partial class SkiaCamera
         // Lazily create / recreate scaler when dimensions change.
         // Output format is RGBA8Unorm to match the documented ML buffer contract
         // (Android GL readback + Windows SKColorType.Rgba8888 return the same byte order).
-        if (_mlScaler == null || _mlScalerTargetWidth != targetWidth || _mlScalerTargetHeight != targetHeight)
+        // Also recreated for a new camera device: the readback is one frame late, so a kept scaler
+        // would hand the previous device's last frame to the first read after a switch.
+        if (_mlScaler == null || _mlScalerTargetWidth != targetWidth || _mlScalerTargetHeight != targetHeight
+            || _mlScalerDevice != CameraDevice)
         {
             _mlScaler?.Dispose();
             _mlScaler = new MetalPreviewScaler();
@@ -4017,6 +4021,7 @@ public partial class SkiaCamera
             }
             _mlScalerTargetWidth = targetWidth;
             _mlScalerTargetHeight = targetHeight;
+            _mlScalerDevice = CameraDevice;
         }
 
         // PreviewTexture is the raw sensor CVPixelBuffer wrapped in a Metal texture —

@@ -1813,8 +1813,19 @@ public partial class SkiaCamera : SkiaControl
         StopAll();
     }
 
+    int _startOnResume; // a start that arrived while the app was hidden
+
     private void Super_OnNativeAppResumed(object sender, EventArgs e)
     {
+        // a start deferred while hidden never got to its permission check: run the full start, not just
+        // the hardware (a first launch with another dialog up would otherwise never ask for the camera)
+        if (Interlocked.Exchange(ref _startOnResume, 0) == 1)
+        {
+            if (IsOn)
+                StartWithPermissionsInternal();
+            return;
+        }
+
         ResumeIfNeeded();
     }
 
@@ -1931,12 +1942,17 @@ public partial class SkiaCamera : SkiaControl
 
             ClearInternalCache();
 
-            // never start the hardware while the app is hidden (a pending restart, IsOn set meanwhile):
-            // resume starts it when IsOn (ResumeIfNeeded)
+            // never start the hardware while the app is hidden (a pending restart, IsOn set meanwhile, or a
+            // system dialog up on iOS): the start is kept and runs on resume, permission check included
             if (Super.InBackground)
             {
-                Debug.WriteLine("[SkiaCamera] Start skipped: app in background");
-                return;
+                Volatile.Write(ref _startOnResume, 1);
+                // resumed between the check and the flag and the resume handler did not take it: start now
+                if (Super.InBackground || Interlocked.Exchange(ref _startOnResume, 0) == 0)
+                {
+                    Debug.WriteLine("[SkiaCamera] Start deferred: app in background");
+                    return;
+                }
             }
 
             try

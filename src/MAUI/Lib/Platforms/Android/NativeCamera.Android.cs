@@ -2516,7 +2516,10 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         }
         catch (Exception e)
         {
+            // camera off (no session) or closing: report it, or TakePicture never completes
             Trace.WriteLine(e);
+            mState = STATE_PREVIEW;
+            StillImageCaptureFailed?.Invoke(e);
         }
     }
 
@@ -2532,6 +2535,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         catch (CameraAccessException e)
         {
             e.PrintStackTrace();
+            OnCaptureError(e);
         }
     }
 

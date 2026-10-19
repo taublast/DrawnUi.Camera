@@ -2077,7 +2077,13 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     public void TakePicture()
     {
         if (_isCapturingStill || _photoOutput == null)
+        {
+            // report it, or TakePicture never completes
+            StillImageCaptureFailed?.Invoke(new InvalidOperationException(_photoOutput == null
+                ? "the camera is off"
+                : "a picture is already being taken"));
             return;
+        }
 
         Task.Run(async () =>
         {

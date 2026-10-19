@@ -1477,18 +1477,18 @@ public partial class SkiaCamera : SkiaControl
     /// This prevents camera restart spam when multiple properties change in quick succession.
     ///
     /// How it works:
-    /// - First property change: starts 500ms settling timer
-    /// - More property changes during settling: timer resets to 500ms (waits for "peace")
-    /// - No changes for 500ms: camera restarts once with all accumulated changes
+    /// - First property change: starts 350ms settling timer
+    /// - More property changes during settling: timer resets to 350ms (waits for "peace")
+    /// - No changes for 350ms: camera restarts once with all accumulated changes
     /// </summary>
     private void ScheduleRestartDebounced()
     {
-        // Cancel any pending restart (resets the 500ms settling period)
+        // Cancel any pending restart (resets the 350ms settling period)
         ClearInternalCache();
         _restartDebounceTimer?.Dispose();
 
 
-        // Schedule restart after 500ms of no property changes
+        // Schedule restart after 350ms of no property changes
         // If another property change happens before this fires, it will cancel and reschedule again
         _restartDebounceTimer = new System.Threading.Timer(_ =>
         {
@@ -1510,7 +1510,7 @@ public partial class SkiaCamera : SkiaControl
                 _restartDebounceTimer?.Dispose();
                 _restartDebounceTimer = null;
             }
-        }, null, TimeSpan.FromMilliseconds(500), Timeout.InfiniteTimeSpan);
+        }, null, TimeSpan.FromMilliseconds(350), Timeout.InfiniteTimeSpan);
     }
 
     #endregion

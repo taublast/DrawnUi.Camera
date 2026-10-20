@@ -3907,6 +3907,11 @@ public partial class SkiaCamera
 
     private IAudioCapture _audioOnlyCapture;
 
+    private partial Task SetRecordingPausedPlatform(bool paused)
+    {
+        throw new NotSupportedException("Pausing a video recording is not supported on this platform yet.");
+    }
+
     private partial void CreateAudioOnlyEncoder(out IAudioOnlyEncoder encoder)
     {
         encoder = new AudioOnlyEncoderApple();

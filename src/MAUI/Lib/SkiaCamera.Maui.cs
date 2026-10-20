@@ -52,6 +52,11 @@ public partial class SkiaCamera : SkiaControl
     /// </summary>
     public event EventHandler<bool> IsRecordingAudioOnlyChanged;
 
+    /// <summary>
+    /// Raised when <see cref="IsRecordingPaused"/> changes.
+    /// </summary>
+    public event EventHandler<bool> IsRecordingPausedChanged;
+
 
 
     /// <summary>
@@ -70,12 +75,52 @@ public partial class SkiaCamera : SkiaControl
 
     protected virtual void SetIsRecordingVideo(bool isRecording)
     {
+        if (!isRecording)
+            SetIsRecordingPaused(false); // stopped, failed or aborted
+
         if (IsRecording != isRecording)
         {
             IsRecording = isRecording;
             IsRecordingChanged?.Invoke(this, isRecording);
         }
     }
+
+    protected virtual void SetIsRecordingPaused(bool isPaused)
+    {
+        if (IsRecordingPaused != isPaused)
+        {
+            IsRecordingPaused = isPaused;
+            IsRecordingPausedChanged?.Invoke(this, isPaused);
+        }
+    }
+
+    /// <summary>
+    /// Pauses the live video recording: no video frames and no audio reach the file until
+    /// <see cref="ResumeVideoRecording"/>, and the paused time is cut from it (the clip plays on without a gap).
+    /// The preview keeps running. No-op when not recording live or already paused.
+    /// Windows only for now: throws <see cref="NotSupportedException"/> on other platforms.
+    /// </summary>
+    public Task PauseVideoRecording() => SetRecordingPausedAsync(true);
+
+    /// <summary>
+    /// Resumes a paused video recording. No-op when not recording live or not paused.
+    /// Windows only for now: throws <see cref="NotSupportedException"/> on other platforms.
+    /// </summary>
+    public Task ResumeVideoRecording() => SetRecordingPausedAsync(false);
+
+    private async Task SetRecordingPausedAsync(bool paused)
+    {
+        // live recording only: pre-recording keeps its own behaviour
+        if (!IsRecording || IsPreRecording || IsRecordingPaused == paused)
+            return;
+
+        await SetRecordingPausedPlatform(paused);
+
+        if (IsRecording)
+            SetIsRecordingPaused(paused);
+    }
+
+    private partial Task SetRecordingPausedPlatform(bool paused);
 
     protected virtual void SetIsPreRecording(bool isPreRecording)
     {
@@ -111,6 +156,23 @@ public partial class SkiaCamera : SkiaControl
     {
         get { return (bool)GetValue(IsRecordingProperty); }
         private set { SetValue(IsRecordingProperty, value); }
+    }
+
+    public static readonly BindableProperty IsRecordingPausedProperty = BindableProperty.Create(
+        nameof(IsRecordingPaused),
+        typeof(bool),
+        typeof(SkiaCamera),
+        false,
+        BindingMode.OneWayToSource);
+
+    /// <summary>
+    /// Whether the live video recording is paused (read-only). Back to false when the recording stops,
+    /// fails or is aborted. See <see cref="PauseVideoRecording"/>.
+    /// </summary>
+    public bool IsRecordingPaused
+    {
+        get { return (bool)GetValue(IsRecordingPausedProperty); }
+        private set { SetValue(IsRecordingPausedProperty, value); }
     }
 
     public static readonly BindableProperty IsPreRecordingProperty = BindableProperty.Create(

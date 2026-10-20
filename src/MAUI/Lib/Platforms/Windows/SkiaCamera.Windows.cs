@@ -207,6 +207,10 @@ public partial class SkiaCamera : SkiaControl
         if ((!IsPreRecording && !IsRecording) || _captureVideoEncoder is not WindowsCaptureVideoEncoder winEnc)
             return;
 
+        // paused: the encoder writes nothing; the frame is composed only when it is the preview's source
+        if (IsRecordingPaused && !(MirrorRecordingToPreview && UseRecordingFramesForPreview))
+            return;
+
         var srcImg = captured?.Image;
         if (srcImg == null)
             return;
@@ -1612,6 +1616,25 @@ public partial class SkiaCamera : SkiaControl
     #region AUDIO-ONLY RECORDING
 
     private IAudioCapture _audioOnlyCapture;
+
+    private partial Task SetRecordingPausedPlatform(bool paused)
+    {
+        if (_captureVideoEncoder is WindowsCaptureVideoEncoder encoder)
+        {
+            // the time base of the recording frames and of the audio: elapsed since the capture start
+            var now = DateTime.Now - _captureVideoStartTime;
+            if (paused)
+                encoder.Pause(now);
+            else
+                encoder.Resume(now);
+            return Task.CompletedTask;
+        }
+
+        if (NativeControl is NativeCamera native)
+            return native.SetRecordingPausedAsync(paused);
+
+        return Task.CompletedTask;
+    }
 
     private partial void CreateAudioOnlyEncoder(out IAudioOnlyEncoder encoder)
     {

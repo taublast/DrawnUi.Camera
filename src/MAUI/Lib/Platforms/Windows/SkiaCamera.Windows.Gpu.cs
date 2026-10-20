@@ -216,7 +216,9 @@ public partial class SkiaCamera
         var recorder = _gpuRecorder;
         if (recorder == null)
             return;
-        if ((!IsPreRecording && !IsRecording) || _captureVideoEncoder is not WindowsCaptureVideoEncoder { IsGpu: true } encoder)
+        if ((!IsPreRecording && !IsRecording) || _captureVideoEncoder is not WindowsCaptureVideoEncoder { IsGpu: true } encoder
+            // paused: the encoder writes nothing; the frame is composed only when it is the preview's source
+            || IsRecordingPaused && !(MirrorRecordingToPreview && UseRecordingFramesForPreview))
         {
             recorder.TakeLatestFrame(out _); // keep releasing slots so the camera never waits on us
             return;

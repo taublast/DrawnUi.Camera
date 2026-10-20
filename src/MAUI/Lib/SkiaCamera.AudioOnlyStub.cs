@@ -5,6 +5,11 @@ namespace DrawnUi.Camera;
 // Stub implementations for non-platform-specific builds
 public partial class SkiaCamera
 {
+    private partial System.Threading.Tasks.Task SetRecordingPausedPlatform(bool paused)
+    {
+        throw new System.NotSupportedException("Pausing a video recording is not supported on this platform yet.");
+    }
+
     private partial void CreateAudioOnlyEncoder(out IAudioOnlyEncoder encoder)
     {
         encoder = null;

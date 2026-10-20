@@ -619,6 +619,41 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
     private bool _isRecordingVideo;
     private StorageFile _currentVideoFile;
     private DateTime _recordingStartTime;
+    private bool _recordingPaused;
+    private DateTime _recordingPausedAt;
+    private TimeSpan _recordingPausedTotal;
+
+    /// <summary>Recorded time so far, paused time excluded (frozen while paused).</summary>
+    private TimeSpan RecordedDuration
+    {
+        get
+        {
+            var now = _recordingPaused ? _recordingPausedAt : DateTime.Now;
+            return now - _recordingStartTime - _recordingPausedTotal;
+        }
+    }
+
+    /// <summary>
+    /// Pauses or resumes the native MediaCapture recording; MediaCapture leaves the paused time out of the file.
+    /// </summary>
+    public async Task SetRecordingPausedAsync(bool paused)
+    {
+        if (!_isRecordingVideo || _mediaCapture == null || _recordingPaused == paused)
+            return;
+
+        if (paused)
+        {
+            await _mediaCapture.PauseRecordAsync(global::Windows.Media.Devices.MediaCapturePauseBehavior.RetainHardwareResources);
+            _recordingPausedAt = DateTime.Now;
+            _recordingPaused = true;
+        }
+        else
+        {
+            await _mediaCapture.ResumeRecordAsync();
+            _recordingPausedTotal += DateTime.Now - _recordingPausedAt;
+            _recordingPaused = false;
+        }
+    }
     private System.Threading.Timer _progressTimer;
     private double _zoomScale = 1.0;
     private readonly object _lockPreview = new();
@@ -3088,8 +3123,7 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
         if (!_isRecordingVideo)
             return;
 
-        var elapsed = DateTime.Now - _recordingStartTime;
-        RecordingProgress?.Invoke(elapsed);
+        RecordingProgress?.Invoke(RecordedDuration);
     }
 
 
@@ -3131,6 +3165,8 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
 
             _isRecordingVideo = true;
             _recordingStartTime = DateTime.Now;
+            _recordingPaused = false;
+            _recordingPausedTotal = TimeSpan.Zero;
 
             // Start progress timer (fire every second)
             _progressTimer = new System.Threading.Timer(OnProgressTimer, null,
@@ -3166,8 +3202,8 @@ public partial class NativeCamera : IDisposable, INativeCamera, INotifyPropertyC
             // Stop recording
             await _mediaCapture.StopRecordAsync();
 
-            DateTime recordingEndTime = DateTime.Now;
-            TimeSpan duration = recordingEndTime - _recordingStartTime;
+            TimeSpan duration = RecordedDuration;
+            _recordingPaused = false;
 
             // Get file size
             var properties = await _currentVideoFile.GetBasicPropertiesAsync();

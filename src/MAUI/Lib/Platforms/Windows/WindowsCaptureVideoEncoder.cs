@@ -120,6 +120,12 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         // Convert nanoseconds to 100-nanosecond units (HNS)
         long hnsTime = adjustedTimestampNs / 100;
 
+        // recording pause: dropped while paused, later audio moves back with the video
+        var audioTime = TimeSpan.FromTicks(hnsTime);
+        if (CutPaused(ref audioTime))
+            return;
+        hnsTime = audioTime.Ticks;
+
         // In pre-recording mode, further adjust timestamps relative to buffer start
         if (IsPreRecordingMode)
         {
@@ -208,6 +214,86 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
     /// and when audio capture actually started. Audio timestamps need to be adjusted by this
     /// amount to align with video timestamps.
     /// </summary>
+    // Recording pause (live recording only). Times are in the frames' time base: elapsed since the camera's
+    // capture start, the base of BeginFrame's timestamp and of audio after _audioTimestampOffsetNs.
+    // Each pause is an interval [Start, End) in that time base, End = MaxValue while paused. Samples are cut by their
+    // own time, not by when they arrive: audio and frames captured just before a pause but delivered after it
+    // still belong to the file.
+    private readonly object _pauseLock = new();
+    private readonly List<(TimeSpan Start, TimeSpan End)> _pauses = new();
+    private bool _recordingPaused;
+    private TimeSpan _pausedTotal;      // wall time of the finished pauses, for the durations
+    private DateTime _pauseStartedWall;
+
+    /// <summary>
+    /// Stops writing video and audio from <paramref name="now"/> (elapsed since the capture start) until
+    /// <see cref="Resume"/>; the paused time is cut from the file. The preview keeps being produced.
+    /// </summary>
+    public void Pause(TimeSpan now)
+    {
+        lock (_pauseLock)
+        {
+            if (_recordingPaused)
+                return;
+            _recordingPaused = true;
+            _pauses.Add((now, TimeSpan.MaxValue));
+            _pauseStartedWall = DateTime.Now;
+        }
+    }
+
+    /// <summary>
+    /// Writes again from <paramref name="now"/>; later samples move back by the total time paused.
+    /// </summary>
+    public void Resume(TimeSpan now)
+    {
+        lock (_pauseLock)
+        {
+            if (!_recordingPaused)
+                return;
+            _recordingPaused = false;
+            var last = _pauses[^1];
+            _pauses[^1] = (last.Start, now > last.Start ? now : last.Start);
+            _pausedTotal += DateTime.Now - _pauseStartedWall;
+        }
+    }
+
+    /// <summary>
+    /// True when a live sample at <paramref name="time"/> falls inside a pause and must not be written; otherwise
+    /// moves it back by the length of the pauses before it.
+    /// </summary>
+    private bool CutPaused(ref TimeSpan time)
+    {
+        if (IsPreRecordingMode)
+            return false;
+
+        lock (_pauseLock)
+        {
+            var before = TimeSpan.Zero;
+            foreach (var (start, end) in _pauses)
+            {
+                if (time < start)
+                    break;
+                if (time < end)
+                    return true;
+                before += end - start;
+            }
+            time -= before;
+            return false;
+        }
+    }
+
+    /// <summary>Wall time spent paused in this recording, the current pause included.</summary>
+    private TimeSpan PausedSoFar
+    {
+        get
+        {
+            lock (_pauseLock)
+            {
+                return _recordingPaused ? _pausedTotal + (DateTime.Now - _pauseStartedWall) : _pausedTotal;
+            }
+        }
+    }
+
     public void SetAudioTimestampOffset(long offsetNs)
     {
         _audioTimestampOffsetNs = offsetNs;
@@ -285,6 +371,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
     private void SubmitGpuFrame()
     {
         var timestamp = _pendingTimestamp;
+        var paused = CutPaused(ref timestamp);
         if (IsPreRecordingMode)
         {
             if (_isBufferA)
@@ -300,7 +387,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                 _bufferBLastTimestamp = timestamp;
             }
         }
-        else if (!_hasFirstVideoFrame)
+        else if (!paused && !_hasFirstVideoFrame)
         {
             _firstVideoFrameTimestamp = timestamp;
             _hasFirstVideoFrame = true;
@@ -308,14 +395,20 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
 
         if (!_isRecording)
             return;
-        _totalFrameCount++;
 
-        var sample = _gpu.EndFrameSample();
+        var sample = _gpu.EndFrameSample(); // also hands the composed frame to the preview mirror
         if (sample == 0)
         {
             GpuSamplesUnavailable++;
             return;
         }
+
+        if (paused)
+        {
+            DrawnUi.Camera.Gpu.GpuRecorder.ReleaseSample(sample); // preview only
+            return;
+        }
+        _totalFrameCount++;
 
         _sinkWriterSemaphore.Wait();
         try
@@ -637,6 +730,11 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                 // Notify listeners that a new preview frame is ready
                 PreviewAvailable?.Invoke(this, EventArgs.Empty);
 
+                // paused: the preview only, no readback for the file
+                var pausedCheck = _pendingTimestamp;
+                if (CutPaused(ref pausedCheck))
+                    return;
+
                 // Reuse a single CPU bitmap buffer for readback to minimize jitter
                 if (_readbackBitmap == null || _readbackBitmap.Width != _width || _readbackBitmap.Height != _height)
                 {
@@ -722,6 +820,13 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         _hasFirstVideoFrame = false;
         _firstVideoFrameTimestamp = TimeSpan.Zero;
 
+        lock (_pauseLock)
+        {
+            _recordingPaused = false;
+            _pauses.Clear();
+            _pausedTotal = TimeSpan.Zero;
+        }
+
         // CRITICAL: Reset timestamp tracking for NEW recording (prevents duration from including pre-recording)
         _lastSampleTime100ns = -1;
         _encodingDurationSetFromFrames = false;
@@ -745,6 +850,9 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
 
     public async Task AddFrameAsync(SKBitmap bitmap, TimeSpan timestamp)
     {
+        if (CutPaused(ref timestamp))
+            return;
+
         // Track first and last frame timestamps for the active buffer
         if (IsPreRecordingMode)
         {
@@ -833,7 +941,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                 var height = _height;
                 var streamIndex = _streamIndex;
                 var rtDurationPerFrame = _rtDurationPerFrame;
-                var pendingTimestamp = _pendingTimestamp;
+                var pendingTimestamp = timestamp;
                 var isPreRecordingMode = IsPreRecordingMode;
                 var isBufferA = _isBufferA;
                 var bufferAFirstTimestamp = _bufferAFirstTimestamp;
@@ -990,6 +1098,10 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
                     sample.AddBuffer(mediaBuffer);
 
                     long hnsTime = timestampNs / 100;
+                    var audioTime = TimeSpan.FromTicks(hnsTime);
+                    if (CutPaused(ref audioTime))
+                        return;
+                    hnsTime = audioTime.Ticks;
                     if (IsPreRecordingMode)
                     {
                         TimeSpan baseTimestamp = _isBufferA ? _bufferAFirstTimestamp : _bufferBFirstTimestamp;
@@ -1056,7 +1168,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         {
             if (_isRecording)
             {
-                return DateTime.Now - _startTime;
+                return DateTime.Now - _startTime - PausedSoFar; // frozen while paused
             }
             return TimeSpan.Zero;
         }
@@ -2284,7 +2396,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
     {
         if (_isRecording)
         {
-            var elapsed = DateTime.Now - _startTime;
+            var elapsed = DateTime.Now - _startTime - PausedSoFar; // frozen while paused
             ProgressReported?.Invoke(this, elapsed);
         }
     }

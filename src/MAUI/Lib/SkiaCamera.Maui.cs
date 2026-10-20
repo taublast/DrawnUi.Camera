@@ -98,13 +98,13 @@ public partial class SkiaCamera : SkiaControl
     /// Pauses the live video recording: no video frames and no audio reach the file until
     /// <see cref="ResumeVideoRecording"/>, and the paused time is cut from it (the clip plays on without a gap).
     /// The preview keeps running. No-op when not recording live or already paused.
-    /// Windows only for now: throws <see cref="NotSupportedException"/> on other platforms.
+    /// Windows, and iOS / Mac Catalyst with UseRealtimeVideoProcessing; throws <see cref="NotSupportedException"/> otherwise.
     /// </summary>
     public Task PauseVideoRecording() => SetRecordingPausedAsync(true);
 
     /// <summary>
     /// Resumes a paused video recording. No-op when not recording live or not paused.
-    /// Windows only for now: throws <see cref="NotSupportedException"/> on other platforms.
+    /// Windows, and iOS / Mac Catalyst with UseRealtimeVideoProcessing; throws <see cref="NotSupportedException"/> otherwise.
     /// </summary>
     public Task ResumeVideoRecording() => SetRecordingPausedAsync(false);
 

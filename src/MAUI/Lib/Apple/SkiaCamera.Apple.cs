@@ -689,6 +689,9 @@ public partial class SkiaCamera
 
     private async Task<ICaptureVideoEncoder> StartRealtimeVideoProcessing(bool preserveCurrentEncoder = false)
     {
+        lock (_audioPauseLock)
+            _audioPauses.Clear(); // a new recording starts unpaused
+
         // Stop preview audio - recording will take over with its own audio capture
         StopPreviewAudioCapture();
 
@@ -3295,14 +3298,19 @@ public partial class SkiaCamera
 
             try
             {
+                // recording pause: dropped inside a pause, later audio moves back with the video
+                long timestampNs = sample.TimestampNs;
+                if (CutPausedAudio(ref timestampNs))
+                    return;
+
                 // Set first timestamp baseline on first sample
                 if (_liveAudioFirstTimestampNs < 0)
                 {
-                    _liveAudioFirstTimestampNs = sample.TimestampNs;
+                    _liveAudioFirstTimestampNs = timestampNs;
                 }
 
                 // Normalize timestamp relative to start
-                long normalizedNs = sample.TimestampNs - _liveAudioFirstTimestampNs;
+                long normalizedNs = timestampNs - _liveAudioFirstTimestampNs;
                 if (normalizedNs < 0) normalizedNs = 0;
 
                 // The sample buffer owns a copy of the audio: released with it once the writer is done,
@@ -3907,9 +3915,64 @@ public partial class SkiaCamera
 
     private IAudioCapture _audioOnlyCapture;
 
+    // Recording pause for the live audio file: the same pauses as the video encoder's, in the audio samples' time
+    // base (system uptime, AudioCaptureApple), End = long.MaxValue while paused.
+    private readonly object _audioPauseLock = new();
+    private readonly List<(long Start, long End)> _audioPauses = new();
+
+    private static long AudioClockNs() => (long)(NSProcessInfo.ProcessInfo.SystemUptime * 1_000_000_000);
+
+    /// <summary>
+    /// True when a live audio sample at <paramref name="timestampNs"/> falls inside a pause and must not be written;
+    /// otherwise moves it back by the length of the pauses before it. Cut by capture time, not arrival.
+    /// </summary>
+    private bool CutPausedAudio(ref long timestampNs)
+    {
+        lock (_audioPauseLock)
+        {
+            long before = 0;
+            foreach (var (start, end) in _audioPauses)
+            {
+                if (timestampNs < start)
+                    break;
+                if (timestampNs < end)
+                    return true;
+                before += end - start;
+            }
+            timestampNs -= before;
+            return false;
+        }
+    }
+
     private partial Task SetRecordingPausedPlatform(bool paused)
     {
-        throw new NotSupportedException("Pausing a video recording is not supported on this platform yet.");
+        if (_captureVideoEncoder is AppleVideoToolboxEncoder encoder)
+        {
+            var now = DateTime.Now - _captureVideoStartTime; // the video frames' time base
+            var nowNs = AudioClockNs();                      // the audio samples' time base
+            if (paused)
+            {
+                encoder.Pause(now);
+                lock (_audioPauseLock)
+                    _audioPauses.Add((nowNs, long.MaxValue));
+            }
+            else
+            {
+                encoder.Resume(now);
+                lock (_audioPauseLock)
+                {
+                    if (_audioPauses.Count > 0 && _audioPauses[^1].End == long.MaxValue)
+                    {
+                        var last = _audioPauses[^1];
+                        _audioPauses[^1] = (last.Start, Math.Max(nowNs, last.Start));
+                    }
+                }
+            }
+            return Task.CompletedTask;
+        }
+
+        // AVCaptureMovieFileOutput has no pause on iOS (pauseRecording is macOS only)
+        throw new NotSupportedException("Pausing is supported for realtime recording only (UseRealtimeVideoProcessing) on this platform.");
     }
 
     private partial void CreateAudioOnlyEncoder(out IAudioOnlyEncoder encoder)

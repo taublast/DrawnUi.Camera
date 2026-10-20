@@ -295,13 +295,91 @@ namespace DrawnUi.Camera
 
         public bool IsRecording => _isRecording;
 
+        // Recording pause (live recording only). Each pause is an interval [Start, End) in the frames' time base
+        // (elapsed since the camera's capture start, BeginFrame's timestamp), End = MaxValue while paused. Frames
+        // are cut by their own time, not by when they are submitted.
+        private readonly object _pauseLock = new();
+        private readonly List<(TimeSpan Start, TimeSpan End)> _pauses = new();
+        private bool _recordingPaused;
+        private TimeSpan _pausedTotal;      // wall time of the finished pauses, for the durations
+        private DateTime _pauseStartedWall;
+
+        /// <summary>
+        /// Stops writing frames from <paramref name="now"/> (elapsed since the capture start) until <see cref="Resume"/>;
+        /// the paused time is cut from the file. The preview keeps being produced.
+        /// </summary>
+        public void Pause(TimeSpan now)
+        {
+            lock (_pauseLock)
+            {
+                if (_recordingPaused)
+                    return;
+                _recordingPaused = true;
+                _pauses.Add((now, TimeSpan.MaxValue));
+                _pauseStartedWall = DateTime.Now;
+            }
+        }
+
+        /// <summary>
+        /// Writes again from <paramref name="now"/>; later frames move back by the pauses before them.
+        /// </summary>
+        public void Resume(TimeSpan now)
+        {
+            lock (_pauseLock)
+            {
+                if (!_recordingPaused)
+                    return;
+                _recordingPaused = false;
+                var last = _pauses[^1];
+                _pauses[^1] = (last.Start, now > last.Start ? now : last.Start);
+                _pausedTotal += DateTime.Now - _pauseStartedWall;
+            }
+        }
+
+        /// <summary>
+        /// True when a live frame at <paramref name="time"/> falls inside a pause and must not be written; otherwise
+        /// moves it back by the length of the pauses before it.
+        /// </summary>
+        private bool CutPaused(ref TimeSpan time)
+        {
+            if (IsPreRecordingMode)
+                return false;
+
+            lock (_pauseLock)
+            {
+                var before = TimeSpan.Zero;
+                foreach (var (start, end) in _pauses)
+                {
+                    if (time < start)
+                        break;
+                    if (time < end)
+                        return true;
+                    before += end - start;
+                }
+                time -= before;
+                return false;
+            }
+        }
+
+        /// <summary>Wall time spent paused in this recording, the current pause included.</summary>
+        private TimeSpan PausedSoFar
+        {
+            get
+            {
+                lock (_pauseLock)
+                {
+                    return _recordingPaused ? _pausedTotal + (DateTime.Now - _pauseStartedWall) : _pausedTotal;
+                }
+            }
+        }
+
         public TimeSpan LiveRecordingDuration
         {
             get
             {
                 if (_isRecording)
                 {
-                    return DateTime.Now - _startTime;
+                    return DateTime.Now - _startTime - PausedSoFar; // frozen while paused
                 }
                 return TimeSpan.Zero;
             }
@@ -816,12 +894,13 @@ namespace DrawnUi.Camera
                 BackpressureDroppedFrames = 0;
                 _lastSubmittedTimestamp = -1;
                 EncodingStatus = "Recording Live";
+                ResetPauses();
 
                 _progressTimer = new System.Threading.Timer(_ =>
                 {
                     if (_isRecording)
                     {
-                        var elapsed = DateTime.Now - _startTime;
+                        var elapsed = DateTime.Now - _startTime - PausedSoFar; // frozen while paused
                         ProgressReported?.Invoke(this, elapsed);
                     }
                 }, null, TimeSpan.Zero, TimeSpan.FromMilliseconds(100));
@@ -872,12 +951,13 @@ namespace DrawnUi.Camera
             BackpressureDroppedFrames = 0;
             _lastSubmittedTimestamp = -1;
             EncodingStatus = "Started";
+            ResetPauses();
 
             _progressTimer = new System.Threading.Timer(_ =>
             {
                 if (_isRecording)
                 {
-                    var elapsed = DateTime.Now - _startTime;
+                    var elapsed = DateTime.Now - _startTime - PausedSoFar; // frozen while paused
                     ProgressReported?.Invoke(this, elapsed);
                 }
             }, null, TimeSpan.Zero, TimeSpan.FromMilliseconds(100));
@@ -1185,8 +1265,11 @@ namespace DrawnUi.Camera
                 }
                 else
                 {
-                    // NORMAL RECORDING MODE: Use AVAssetWriter only
-                    await SubmitFrameToAssetWriter();
+                    // NORMAL RECORDING MODE: Use AVAssetWriter only. Recording pause: the preview above is made,
+                    // a frame inside a pause is not written, later ones move back by the pauses before them
+                    var frameTime = _pendingTimestamp;
+                    if (!CutPaused(ref frameTime))
+                        await SubmitFrameToAssetWriter(frameTime);
                 }
             }
             catch (Exception ex)
@@ -1300,7 +1383,17 @@ namespace DrawnUi.Camera
             await Task.CompletedTask;
         }
 
-        private async Task SubmitFrameToAssetWriter()
+        private void ResetPauses()
+        {
+            lock (_pauseLock)
+            {
+                _recordingPaused = false;
+                _pauses.Clear();
+                _pausedTotal = TimeSpan.Zero;
+            }
+        }
+
+        private async Task SubmitFrameToAssetWriter(TimeSpan frameTime)
         {
             // Zero-Copy Optimization:
             // Use current pixel buffer (Metal-backed) if available
@@ -1358,7 +1451,7 @@ namespace DrawnUi.Camera
                 // Append to AVAssetWriter
                 // TIMESTAMP NORMALIZATION: Always normalize timestamps to start at 0
                 // This ensures clean files for Passthrough concatenation
-                double timestamp = _pendingTimestamp.TotalSeconds;
+                double timestamp = frameTime.TotalSeconds;
 
                 // Always track first frame for normalization
                 if (_firstLiveFrameTimestamp < 0)

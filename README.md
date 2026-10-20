@@ -28,11 +28,16 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.91
+## What's New  1.10.7.94
 
- * Built on DrawnUi 1.10.7.9 (`DrawnUi.Maui` / `DrawnUi.Net`), with its fixes: switching input off works the same on every control, a drawer no longer stops halfway, no more cut text at in-between screen scales, and `SafeAction` runs on time.
+ * `TakePicture` with the camera off, or during another capture, raises `CaptureFailed` instead of waiting forever.
+ * A failed recording stop raises `RecordingFailed` once.
+ * Photo and video metadata: dates, exposure bias, brightness and GPS minutes and seconds are no longer lost or shifted, also on phones set to a language with a decimal comma, and video dates are written in UTC.
+ * Camera behavior is the same as 1.10.7.91: 1.10.7.92 and 1.10.7.93 changed camera switching, and those changes are not in this version.
 
 ## Previously 
+
+ * Built on DrawnUi 1.10.7.9 (`DrawnUi.Maui` / `DrawnUi.Net`), with its fixes: switching input off works the same on every control, a drawer no longer stops halfway, no more cut text at in-between screen scales, and `SafeAction` runs on time.
 
  * Built on DrawnUi 1.10.7.8, with its iOS fix for one caret when switching between fields in different canvases.
  * iOS: photos are taken with `AVCapturePhotoOutput`, with settings per shot (flash, quality). At `Max` quality, iPhones with a 48 MP camera now take full 48 MP photos (12 MP before).

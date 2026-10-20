@@ -2942,7 +2942,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         }
 
         if (FormsControl == null || _isCapturingStill || State != CameraProcessorState.Enabled)
+        {
+            // released now, not at GC: a held buffer stays out of the camera's pool
+            sampleBuffer?.Dispose();
             return;
+        }
 
         // Start processing thread if not running
         if (_frameProcessingThread == null)

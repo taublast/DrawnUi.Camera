@@ -37,9 +37,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ## Previously 
 
- * Built on DrawnUi 1.10.7.9 (`DrawnUi.Maui` / `DrawnUi.Net`), with its fixes: switching input off works the same on every control, a drawer no longer stops halfway, no more cut text at in-between screen scales, and `SafeAction` runs on time.
-
- * Built on DrawnUi 1.10.7.8, with its iOS fix for one caret when switching between fields in different canvases.
+ * Built on DrawnUi 1.10.7.9 (`DrawnUi.Maui` / `DrawnUi.Net`), with its fixes: switching input off works the same on every control, a drawer no longer stops halfway, no more cut text at in-between screen scales, and `SafeAction` runs on time. Before that, DrawnUi 1.10.7.8 brought the iOS fix for one caret when switching between fields in different canvases.
  * iOS: photos are taken with `AVCapturePhotoOutput`, with settings per shot (flash, quality). At `Max` quality, iPhones with a 48 MP camera now take full 48 MP photos (12 MP before).
  * iOS: photos carry the date they were taken (`DateTimeOriginal`, with the time zone offset).
  * MAUI: rendering and saving a captured photo makes fewer full-size copies, so a 48 MP photo needs less memory at its peak (about 1.5 GB instead of 2.0 GB).

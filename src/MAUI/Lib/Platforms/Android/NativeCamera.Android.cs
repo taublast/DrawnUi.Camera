@@ -9,11 +9,9 @@ using Android.Hardware.Camera2.Params;
 using Android.Media;
 using Android.OS;
 using Android.Provider;
-using Android.Renderscripts;
 using Android.Util;
 using Android.Views;
 using AppoMobi.Maui.Gestures;
-using AppoMobi.Maui.Native.Droid.Graphics;
 using AppoMobi.Specials;
 using Java.Lang;
 using Java.Util.Concurrent;
@@ -383,20 +381,11 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         return jFolder;
     }
 
-    public RenderScript rs;
-
-    protected AllocatedBitmap Output { get; set; }
-
-    //protected DoubleBuffer Output { get; set; }
-
-
     protected void AllocateOutSurface(bool reset = false)
     {
 #if DEBUG_RELEASE
 		Trace.WriteLine($"[CAMERA] reallocating surface {mPreviewSize.Width}x{mPreviewSize.Height}");
 #endif
-
-        var kill = Output;
 
         var width = PreviewWidth;
         var height = PreviewHeight;
@@ -408,88 +397,55 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
         PreviewSize = new(width, height);
 
-
-        //new
-        //var ok = FormsControl.AllocatedFrameSurface(width, height);
-
-        //var output = Allocation.CreateTyped(rs,
-        //	new Android.Renderscripts.Type.Builder(rs,
-        //			Android.Renderscripts.Element.RGBA_8888(rs))
-        //		.SetX(width)
-        //		.SetY(height).Create(),
-        //	AllocationUsage.IoOutput | AllocationUsage.Script);
-
-        //output.Surface = FormsControl.FrameSurface;
-
-
-        //old
-
-        Output = new(rs, width, height);
-
-#if DEBUG_RELEASE
-		Trace.WriteLine($"[CAMERA] ceated output");
-#endif
-
         FormsControl.SetRotatedContentSize(
             PreviewSize,
             SensorOrientation);
 
-        if (kill != null)
-        {
-            kill.Dispose();
-        }
-
         //_stack.Clear();
     }
 
-    //var output = Allocation.CreateTyped(rs,
-    //	new Android.Renderscripts.Type.Builder(rs,
-    //			Android.Renderscripts.Element.RGBA_8888(rs))
-    //		.SetX(mRotatedPreviewSize.Width)
-    //		.SetY(mRotatedPreviewSize.Height).Create(),
-    //	AllocationUsage.IoOutput | AllocationUsage.Script);
-
-    public SplinesHelper Splines { get; set; } = new();
-
+    private YuvConverter _yuvConverter;
+    private readonly object _yuvConverterLock = new();
 
     /// <summary>
-    /// Process image using RenderScript
+    /// The YUV converter of this camera (GPU shader on its own GL thread), created when the camera starts so the
+    /// first photo does not wait for its setup.
     /// </summary>
-    /// <param name="image"></param>
-    /// <param name="output"></param>
-    public void ProcessImage(Image image, Allocation output, bool mirrorX, bool mirrorY)
+    private YuvConverter GetYuvConverter()
+    {
+        lock (_yuvConverterLock)
+        {
+            return _yuvConverter ??= new YuvConverter();
+        }
+    }
+
+    private void ReleaseYuvConverter()
+    {
+        YuvConverter converter;
+        lock (_yuvConverterLock)
+        {
+            converter = _yuvConverter;
+            _yuvConverter = null;
+        }
+        converter?.Dispose();
+    }
+
+    /// <summary>
+    /// Converts a YUV_420_888 frame to an RGBA image rotated by the sensor orientation, with the current Effect.
+    /// </summary>
+    private SKImage ConvertYuvFrame(Image image, bool mirrorX, bool mirrorY, bool fullSizePhoto)
     {
         var rotation = SensorOrientation;
+        var options = Effect switch
+        {
+            CameraEffect.ColorNegativeAuto => new YuvConversion(rotation, mirrorX, mirrorY, Gamma, useLut: true),
+            CameraEffect.ColorNegativeManual => new YuvConversion(rotation, mirrorX, mirrorY, Gamma, invert: true),
+            CameraEffect.GrayscaleNegative => new YuvConversion(rotation, mirrorX, mirrorY, Gamma, bw: true, invert: true),
+            CameraEffect.Grayscale => new YuvConversion(rotation, mirrorX, mirrorY, Gamma, bw: true),
+            _ => new YuvConversion(rotation, mirrorX, mirrorY, Gamma)
+        };
 
-        if (Effect == CameraEffect.ColorNegativeAuto)
-        {
-            if (Splines.Current != null)
-                Rendering.BlitWithLUT(rs, Splines.Renderer, Splines.Current.RendererLUT, image, output, rotation,
-                    Gamma, mirrorX, mirrorY);
-            else
-                Rendering.TestOutput(rs, output);
-        }
-        else
-        {
-            if (Effect == CameraEffect.ColorNegativeManual)
-            {
-                Rendering.BlitAdjust(rs, Splines.Renderer, image, output, rotation, Gamma, false, true, mirrorX, mirrorY);
-            }
-            else if (Effect == CameraEffect.GrayscaleNegative)
-            {
-                Rendering.BlitAdjust(rs, Splines.Renderer, image, output, rotation, Gamma, true, true, mirrorX, mirrorY);
-            }
-            else if (Effect == CameraEffect.Grayscale)
-            {
-                Rendering.BlitAdjust(rs, Splines.Renderer, image, output, rotation, Gamma, true, false, mirrorX, mirrorY);
-            }
-            else
-            {
-                //default, no effects
-                Rendering.BlitAdjust(rs, Splines.Renderer, image, output, rotation, Gamma, false, false, mirrorX, mirrorY);
-                //Rendering.TestOutput(rs, output);
-            }
-        }
+        return GetYuvConverter().Convert(image, options, fullSizePhoto);
     }
 
     #region Async Frame Processing (iOS-style)
@@ -601,7 +557,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
             try
             {
-                ProcessFrameWithRenderScript(image);
+                ProcessImageReaderFrame(image);
             }
             catch (Exception ex)
             {
@@ -617,13 +573,9 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
     /// <summary>
     /// Process a camera frame on the background thread (all heavy work happens here)
     /// </summary>
-    private void ProcessFrameWithRenderScript(Image image)
+    private void ProcessImageReaderFrame(Image image)
     {
         if (_suspendFrameProcessing)
-            return;
-
-        var allocated = Output;
-        if (allocated?.Allocation == null || allocated.Bitmap == null)
             return;
 
         // Handle pre-recording buffer when enabled and not currently recording
@@ -635,19 +587,9 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         if (!ShouldGeneratePreviewFrame())
             return;
 
-        // RenderScript YUV→RGB conversion.
-        // In the experimental dual-stream recording mode we temporarily process ImageReader preview
-        // frames even if GL preview is enabled for non-recording preview sessions.
-        if (!_useGlPreview || (_useGpuCameraPath && AndroidCameraProcessingFlags.UseLegacyDualStreamPreviewDuringRecording))
-        {
-            ProcessImage(image, allocated.Allocation, false, false);
-            allocated.Update();
-        }
-
-
-
-        // Convert to SKImage
-        var sk = allocated.Bitmap.ToSKImage();
+        // YUV→RGB on the GPU (the experimental dual-stream recording mode also comes here while the GL preview
+        // is enabled for non-recording preview sessions)
+        var sk = ConvertYuvFrame(image, false, false, fullSizePhoto: false);
         if (sk == null) return;
 
         // Build CapturedImage
@@ -849,6 +791,8 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
             StartBackgroundThread();
 
+            GetYuvConverter();
+
             OpenCamera(width, height);
 
             MainThread.BeginInvokeOnMainThread(() => { DeviceDisplay.Current.KeepScreenOn = true; });
@@ -888,13 +832,6 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         _flashMode = parent.FlashMode;
         _captureFlashMode = parent.CaptureFlashMode;
 
-        // Defer RenderScript init — GPU preview path (API 26+) doesn't need it.
-        // RenderScript will be lazily initialized if needed (legacy preview fallback or still capture).
-        if (!UseGpuPreview || !GpuCameraFrameProvider.IsSupported())
-        {
-            rs = RenderScript.Create(Platform.AppContext);
-            Splines.Initialize(rs);
-        }
     }
 
     //private readonly FramesQueue _stack = new();
@@ -1503,10 +1440,9 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
                         }
                     }
 
-                    // Fallback: ImageReader + RenderScript path
+                    // Fallback: ImageReader frames converted by the YUV converter
                     if (!_useGlPreview)
                     {
-                        EnsureRenderScriptInitialized();
                         mImageReaderPreview = ImageReader.NewInstance(PreviewWidth, PreviewHeight, ImageFormatType.Yuv420888, 3);
                         mImageReaderPreview.SetOnImageAvailableListener(this, mBackgroundHandler);
                         AllocateOutSurface();
@@ -1882,6 +1818,8 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
                 mImageReaderPhoto.Close();
                 mImageReaderPhoto = null;
             }
+
+            ReleaseYuvConverter();
 
 
             State = CameraProcessorState.None;
@@ -2392,7 +2330,6 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
             if (useDualStreamPreview && mImageReaderPreview == null)
             {
-                EnsureRenderScriptInitialized();
                 mImageReaderPreview = ImageReader.NewInstance(PreviewWidth, PreviewHeight, ImageFormatType.Yuv420888, 3);
                 mImageReaderPreview.SetOnImageAvailableListener(this, mBackgroundHandler);
                 AllocateOutSurface();
@@ -2650,18 +2587,6 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         SetPreview(outImage);
     }
 
-    /// <summary>
-    /// Lazily initialize RenderScript (only needed for legacy preview path and still capture).
-    /// </summary>
-    private void EnsureRenderScriptInitialized()
-    {
-        if (rs == null)
-        {
-            rs = RenderScript.Create(Platform.AppContext);
-            Splines.Initialize(rs);
-        }
-    }
-
     public void StopCapturingStillImage()
     {
         try
@@ -2843,26 +2768,16 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
     {
         try
         {
-            // Still capture always needs RenderScript for YUV→RGB
-            EnsureRenderScriptInitialized();
-
-            var width = image.Width;
-            var height = image.Height;
-
-            if (SensorOrientation == 90 || SensorOrientation == 270)
-            {
-                height = image.Width;
-                width = image.Height;
-            }
-
             //android flips it internally
             bool flipSelfie = !FormsControl.MirrorSavedSelfiePhoto && FormsControl.CameraDevice.Position == CameraPosition.Selfie;
 
-            using var allocated = new AllocatedBitmap(rs, width, height);
-
-            ProcessImage(image, allocated.Allocation, flipSelfie, false);
-
-            allocated.Update();
+            // YUV→RGB with the sensor orientation baked in, on the GPU off the render thread
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var photo = ConvertYuvFrame(image, flipSelfie, false, fullSizePhoto: true);
+            sw.Stop();
+            if (photo == null)
+                throw new InvalidOperationException("Photo conversion failed");
+            Super.Log($"[NativeCameraAndroid] Photo {image.Width}x{image.Height} converted in {sw.ElapsedMilliseconds} ms");
 
             switch (FormsControl.DeviceRotation)
             {
@@ -2895,7 +2810,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
                 DeviceRotation = FormsControl.DeviceRotation,
                 Facing = FormsControl.CameraDevice?.Position ?? FormsControl.Facing,
                 Time = DateTime.UtcNow,
-                Image = allocated.Bitmap.ToSKImage(),
+                Image = photo,
                 Meta = meta,
                 Rotation = rotation
             };

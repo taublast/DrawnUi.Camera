@@ -41,10 +41,9 @@ namespace DrawnUi.Camera
         public static bool IsSupported()
         {
             // Require API 26+ for reliable SurfaceTexture behavior
-            // We will NOT return false for a virtual device running on RELEASE as they are used for automated testing and should not hit deprecated RenderScript path and raise a 16kb misalignment issue.
-            if (Android.OS.Build.VERSION.SdkInt < Android.OS.BuildVersionCodes.O || (IsDebugBuild() && DeviceInfo.Current.DeviceType == DeviceType.Virtual))
+            if (Android.OS.Build.VERSION.SdkInt < Android.OS.BuildVersionCodes.O)
             {
-                System.Diagnostics.Debug.WriteLine("[GpuCameraFrameProvider] GPU preview rendering unsupported on emulator or API < 26.");
+                System.Diagnostics.Debug.WriteLine("[GpuCameraFrameProvider] GPU preview rendering unsupported on API < 26.");
                 return false;
             }
 

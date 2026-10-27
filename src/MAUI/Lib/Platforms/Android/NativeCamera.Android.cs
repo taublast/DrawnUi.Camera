@@ -87,7 +87,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[NativeCameraAndroid] Error setting up still formats: {ex.Message}");
+            Super.Log($"[NativeCameraAndroid] Error setting up still formats: {ex.Message}");
         }
 
         StillFormats = formats;
@@ -1185,6 +1185,9 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
             var activity = Platform.CurrentActivity;
             var manager = (CameraManager)activity.GetSystemService(Context.CameraService);
+            // set again only when a camera is fully set up: a failed setup never opens the previous one
+            CameraId = null;
+
             try
             {
                 //get avalable cameras info
@@ -1253,7 +1256,10 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
                 }
 
                 if (!cameras.Any())
+                {
+                    Super.Log($"[NativeCameraAndroid] No camera matches Facing={FormsControl.Facing} ({cams.Length} camera(s) on this device)");
                     return;
+                }
 
                 // Select camera based on manual device ID, index, or default to first
                 CameraUnit selectedCamera = null;
@@ -1344,7 +1350,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
                         if (!allStillSizes.Any())
                         {
-                            Debug.WriteLine($"[NativeCameraAndroid] No still formats available for camera {CameraId}");
+                            Super.Log($"[NativeCameraAndroid] No still formats available for camera {cameraUnit.Id}");
                             return false;
                         }
 
@@ -1522,15 +1528,15 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
                 if (SetupCamera(selectedCamera))
                     return;
 
-                System.Diagnostics.Debug.WriteLine($"[CameraFragment] No outputs!");
+                Super.Log($"[NativeCameraAndroid] Camera {selectedCamera.Id} has no usable outputs");
             }
             catch (CameraAccessException e)
             {
-                e.PrintStackTrace();
+                Super.Log(e);
             }
             catch (NullPointerException e)
             {
-                //ErrorDialog.NewInstance(GetString(Resource.String.camera_error)).Show(ChildFragmentManager, FRAGMENT_DIALOG);
+                Super.Log(e);
             }
         }
     }
@@ -1774,6 +1780,13 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
                 SetupHardware(width, height);
 
+                if (CameraId == null)
+                {
+                    // the reason was logged by SetupHardware
+                    State = CameraProcessorState.Error;
+                    return false;
+                }
+
                 if (mStateCallback == null)
                     mStateCallback = new CameraStateListener(this);
 
@@ -1797,7 +1810,8 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
             }
             catch (Exception e)
             {
-                Trace.WriteLine(e);
+                Super.Log($"[NativeCameraAndroid] Camera start failed: {e}");
+                State = CameraProcessorState.Error;
                 return false;
             }
             finally

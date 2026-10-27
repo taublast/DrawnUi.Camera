@@ -47,9 +47,13 @@ namespace DrawnUi.Camera
         // Double-buffered pinned image pool — zero per-frame allocation for pixel data
         private SkiaCpuImagePool _imagePool;
 
-        // GL thread (same pattern as AndroidCaptureVideoEncoder.GpuEncodingLoop)
+        // One GL thread owns the EGL context from Initialize to Dispose: setup, frames, buffer reset
+        // and cleanup all run on it. The context is never made current on another thread: some GL
+        // implementations (the Android emulator's) lose the context's objects when it moves.
         private System.Threading.Thread _glThread;
         private System.Threading.ManualResetEventSlim _frameSignal;
+        private readonly System.Collections.Concurrent.ConcurrentQueue<Action> _glWork = new();
+        private readonly object _frameLock = new();
         private volatile bool _stopThread;
         private volatile bool _running;
         private int _postResetFramesToIgnore;
@@ -115,42 +119,48 @@ namespace DrawnUi.Camera
             }
 
             bool resetSuccess = false;
-            var resetDone = new System.Threading.ManualResetEventSlim(false);
-
-            var resetThread = new System.Threading.Thread(() =>
+            RunOnGlThread(() =>
             {
                 try
                 {
-                    MakeCurrent();
                     ReleasePreviewBuffers();
                     _postResetFramesToIgnore = _hasDeliveredPreviewFrame
                         ? Math.Max(0, PreviewFramesToIgnoreAfterReset)
                         : 0;
-                    UnbindCurrent();
                     resetSuccess = true;
                 }
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"[GlPreviewRenderer] ResetPreviewBuffers error: {ex.Message}");
                 }
-                finally
-                {
-                    resetDone.Set();
-                }
-            })
-            {
-                IsBackground = true,
-                Name = "GlPreviewReset"
-            };
-
-            resetThread.Start();
-            resetDone.Wait(5000);
+            }, 5000);
             return resetSuccess;
         }
 
         /// <summary>
+        /// Runs work on the GL thread and waits for it (or for the timeout).
+        /// </summary>
+        private void RunOnGlThread(Action work, int timeoutMs)
+        {
+            var done = new System.Threading.ManualResetEventSlim(false);
+            _glWork.Enqueue(() =>
+            {
+                try { work(); }
+                finally { done.Set(); }
+            });
+            _frameSignal?.Set();
+            done.Wait(timeoutMs);
+        }
+
+        private void RunGlWork()
+        {
+            while (_glWork.TryDequeue(out var work))
+                work();
+        }
+
+        /// <summary>
         /// Initialize the GPU preview renderer. Creates EGL context, SurfaceTexture, and readback FBO.
-        /// Must be called before Start(). The initialization runs on a temporary GL thread.
+        /// Must be called before Start(). Starts the renderer's GL thread, which does the initialization.
         /// </summary>
         public bool Initialize(int cameraWidth, int cameraHeight, int previewWidth, int previewHeight, bool isFrontCamera, int sensorOrientation = 90)
         {
@@ -166,12 +176,15 @@ namespace DrawnUi.Camera
             // 270° and 180° sensor orientations: transform reverses Y in the FBO → CPU flip would double-invert.
             _needsYFlip = true;//(sensorOrientation == 90 || sensorOrientation == 0); isFrontCamera whatever..
 
-            // Initialize EGL and GL resources on a dedicated thread (EGL context is thread-local)
+            // Initialize EGL and GL resources on the GL thread that also renders (EGL context is thread-local)
             bool initSuccess = false;
             var initDone = new System.Threading.ManualResetEventSlim(false);
             Exception initError = null;
 
-            var initThread = new System.Threading.Thread(() =>
+            _stopThread = false;
+            _frameSignal = new System.Threading.ManualResetEventSlim(false);
+
+            _glThread = new System.Threading.Thread(() =>
             {
                 try
                 {
@@ -217,9 +230,6 @@ namespace DrawnUi.Camera
                         _flipRowBuffer = new byte[previewWidth * 4];
                     }
 
-                    // Unbind EGL context (GL thread will bind it later)
-                    UnbindCurrent();
-
                     initSuccess = true;
                 }
                 catch (Exception ex)
@@ -231,19 +241,28 @@ namespace DrawnUi.Camera
                 {
                     initDone.Set();
                 }
+
+                // the context stays current on this thread for its whole life
+                if (initSuccess)
+                    GlPreviewLoop();
+
+                Cleanup();
             })
             {
                 IsBackground = true,
-                Name = "GlPreviewInit"
+                Name = "GlPreviewRenderer",
+                Priority = System.Threading.ThreadPriority.AboveNormal
             };
 
-            initThread.Start();
+            _glThread.Start();
             initDone.Wait(5000); // 5s timeout for initialization
 
             if (!initSuccess)
             {
                 System.Diagnostics.Debug.WriteLine($"[GlPreviewRenderer] Initialization failed: {initError?.Message}");
-                Cleanup();
+                // the GL thread cleans up and exits when its initialization ends
+                _stopThread = true;
+                _frameSignal.Set();
                 return false;
             }
 
@@ -273,23 +292,14 @@ namespace DrawnUi.Camera
 
             _gpuFrameProvider?.Start();
 
-            _stopThread = false;
-            _frameSignal = new System.Threading.ManualResetEventSlim(false);
-
             // Subscribe to frame available events from SurfaceTexture
             if (_gpuFrameProvider?.Renderer != null)
             {
                 _gpuFrameProvider.Renderer.OnFrameAvailable += OnCameraFrameAvailable;
             }
 
-            _glThread = new System.Threading.Thread(GlPreviewLoop)
-            {
-                IsBackground = true,
-                Name = "GlPreviewRenderer",
-                Priority = System.Threading.ThreadPriority.AboveNormal
-            };
-            _glThread.Start();
             _running = true;
+            _frameSignal?.Set();
             System.Diagnostics.Debug.WriteLine("[GlPreviewRenderer] Started");
         }
 
@@ -310,12 +320,9 @@ namespace DrawnUi.Camera
 
             _gpuFrameProvider?.Stop();
 
-            _stopThread = true;
-            _frameSignal?.Set(); // Wake thread to exit
-            _glThread?.Join(1000);
-            _glThread = null;
-            _frameSignal?.Dispose();
-            _frameSignal = null;
+            // wait for a frame in progress (up to 1 s, as the thread join did): no frame is processed once Stop returns
+            if (System.Threading.Monitor.TryEnter(_frameLock, 1000))
+                System.Threading.Monitor.Exit(_frameLock);
 
             System.Diagnostics.Debug.WriteLine("[GlPreviewRenderer] Stopped");
         }
@@ -331,47 +338,39 @@ namespace DrawnUi.Camera
         }
 
         /// <summary>
-        /// GL preview loop — runs on dedicated background thread.
-        /// Same pattern as AndroidCaptureVideoEncoder.GpuEncodingLoop.
+        /// GL loop on the renderer's GL thread, with the EGL context current since initialization
+        /// (bound once instead of per frame). Processes frames while started; runs queued GL work
+        /// (buffer reset) at any time.
         /// </summary>
         private void GlPreviewLoop()
         {
-            // Bind EGL context once for the lifetime of this thread instead of per-frame.
-            // Per-frame MakeCurrent() is redundant (context stays current between waits) and
-            // the EGL driver call has measurable overhead at camera frame rate.
-            try { MakeCurrent(); } catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[GlPreviewRenderer] MakeCurrent failed: {ex.Message}");
-                return;
-            }
-
             while (!_stopThread)
             {
-                try
-                {
-                    _frameSignal?.Wait(100); // Wait with timeout for frame signal
-                }
-                catch (ObjectDisposedException)
-                {
-                    break;
-                }
+                // Wait with timeout for frame signal while started; when stopped, sleep until woken
+                _frameSignal.Wait(_running ? 100 : System.Threading.Timeout.Infinite);
+                _frameSignal.Reset();
+
+                RunGlWork();
 
                 if (_stopThread) break;
 
-                _frameSignal?.Reset();
+                lock (_frameLock)
+                {
+                    if (!_running)
+                        continue;
 
-                try
-                {
-                    ProcessPreviewFrame();
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[GlPreviewRenderer] GlPreviewLoop error: {ex.Message}");
+                    try
+                    {
+                        ProcessPreviewFrame();
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[GlPreviewRenderer] GlPreviewLoop error: {ex.Message}");
+                    }
                 }
             }
 
-            // Ensure EGL context is unbound when thread exits
-            try { UnbindCurrent(); } catch { }
+            RunGlWork();
             System.Diagnostics.Debug.WriteLine("[GlPreviewRenderer] GL thread exited");
         }
 
@@ -557,11 +556,6 @@ namespace DrawnUi.Camera
         {
             if (!EGL14.EglMakeCurrent(_eglDisplay, _eglPbufferSurface, _eglPbufferSurface, _eglContext))
                 throw new InvalidOperationException("EGL make current failed");
-        }
-
-        private void UnbindCurrent()
-        {
-            EGL14.EglMakeCurrent(_eglDisplay, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext);
         }
 
         #endregion
@@ -783,6 +777,9 @@ namespace DrawnUi.Camera
 
         #region Cleanup
 
+        /// <summary>
+        /// Runs on the GL thread when it exits.
+        /// </summary>
         private void Cleanup()
         {
             _gpuFrameProvider?.Dispose();
@@ -854,7 +851,13 @@ namespace DrawnUi.Camera
             _disposed = true;
 
             Stop();
-            Cleanup();
+
+            // the GL thread releases everything with its own context, then exits
+            _stopThread = true;
+            _frameSignal?.Set();
+            if (_glThread != null && _glThread != System.Threading.Thread.CurrentThread)
+                _glThread.Join(2000);
+            _glThread = null;
 
             System.Diagnostics.Debug.WriteLine("[GlPreviewRenderer] Disposed");
         }

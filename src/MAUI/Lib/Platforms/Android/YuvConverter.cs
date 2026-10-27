@@ -261,6 +261,12 @@ half4 main(float2 coord)
                 var lutInfo = new SKImageInfo(256, 1, SKColorType.Rgba8888, SKAlphaType.Opaque);
                 _lutImage = SKImage.FromPixelCopy(lutInfo, NegativeLut);
 
+                _stage = "setup: warm-up";
+                using (var plane = SKImage.FromPixelCopy(new SKImageInfo(16, 16, SKColorType.Gray8, SKAlphaType.Opaque), new byte[256]))
+                using (var warm = Render(plane, plane, plane, 16, 16, 16, 16, new YuvConversion(90, false, false), 2, 0, 1))
+                {
+                }
+
                 _gpuReady = true;
                 _stage = "idle";
                 Super.Log($"[YuvConverter] GPU ready in {sw.ElapsedMilliseconds} ms (GL '{GLES20.GlGetString(GLES20.GlRenderer)}', max texture {_maxTextureSize})");
@@ -391,18 +397,37 @@ half4 main(float2 coord)
             using var vImage = layout.Interleaved ? null : layout.CreateVImage(); // interleaved: V is read from the U image
             job.ReleaseImage();
 
+            var result = Render(yImage, uImage, vImage ?? uImage, image.Width, image.Height, outW, outH, options,
+                layout.UvPixelStride, layout.UOffset, layout.VOffset);
+
+            // the image is released: a failure here is converted on the CPU by the caller, which still holds it
+            if (result == null)
+                throw new InvalidOperationException($"GPU surface {outW}x{outH} failed");
+
+            if (purgeAfter)
+                _grContext.PurgeUnlockedResources(true);
+
+            return result;
+        }
+
+        /// <summary>
+        /// One shader pass into a GPU surface and the single readback.
+        /// </summary>
+        SKImage Render(SKImage yImage, SKImage uImage, SKImage vImage, int srcW, int srcH, int outW, int outH,
+            YuvConversion options, int uvPixelStride, int uOffset, int vOffset)
+        {
             _stage = "convert: draw";
             _grContext.ResetContext();
             var nearest = new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None);
 
             var uniforms = new SKRuntimeEffectUniforms(_effect)
             {
-                ["srcSize"] = new[] { (float)image.Width, image.Height },
+                ["srcSize"] = new[] { (float)srcW, srcH },
                 ["outSize"] = new[] { (float)outW, outH },
                 ["rotation"] = (float)options.Rotation,
                 ["mirror"] = new[] { options.MirrorX ? 1f : 0f, options.MirrorY ? 1f : 0f },
-                ["uvPixelStride"] = (float)layout.UvPixelStride,
-                ["uvOffset"] = new[] { (float)layout.UOffset, layout.VOffset },
+                ["uvPixelStride"] = (float)uvPixelStride,
+                ["uvOffset"] = new[] { (float)uOffset, vOffset },
                 ["gamma"] = options.Gamma,
                 ["bw"] = options.Bw ? 1f : 0f,
                 ["invertColors"] = options.Invert ? 1f : 0f,
@@ -411,7 +436,7 @@ half4 main(float2 coord)
 
             using var yShader = yImage.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, nearest);
             using var uShader = uImage.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, nearest);
-            using var vShader = (vImage ?? uImage).ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, nearest);
+            using var vShader = vImage.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, nearest);
             using var lutShader = _lutImage.ToShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, nearest);
             var children = new SKRuntimeEffectChildren(_effect)
             {
@@ -424,10 +449,7 @@ half4 main(float2 coord)
             var info = new SKImageInfo(outW, outH, SKColorType.Rgba8888, SKAlphaType.Premul);
             using var surface = SKSurface.Create(_grContext, false, info);
             if (surface == null)
-            {
-                Super.Log($"[YuvConverter] GPU surface {outW}x{outH} failed, converting on the CPU");
-                return ConvertOnCpu(image, options);
-            }
+                return null;
 
             using (var shader = _effect.ToShader(uniforms, children))
             using (var paint = new SKPaint { Shader = shader, BlendMode = SKBlendMode.Src })
@@ -442,9 +464,6 @@ half4 main(float2 coord)
             {
                 result = gpuImage.ToRasterImage(true);
             }
-
-            if (purgeAfter)
-                _grContext.PurgeUnlockedResources(true);
 
             return result;
         }

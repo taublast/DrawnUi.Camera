@@ -25,19 +25,14 @@ namespace DrawnUi.Camera
         public CameraSurfaceTextureRenderer Renderer => _renderer;
         public bool IsRunning => _running;
 
+        /// <summary>
+        /// True when the app is a debuggable build. Reads the app's own Android flag:
+        /// Assembly.GetEntryAssembly() is null on .NET for Android.
+        /// </summary>
         public static bool IsDebugBuild()
         {
-            var entryAssembly = Assembly.GetEntryAssembly()
-                                ?? Assembly.GetExecutingAssembly(); // fallback
-
-            var debuggableAttribute = entryAssembly.GetCustomAttribute<DebuggableAttribute>();
-
-            if (debuggableAttribute == null)
-                return false; // No attribute → usually Release
-
-            // This is the key flag for "unoptimized / debug mode"
-            return debuggableAttribute.IsJITOptimizerDisabled
-                   || (debuggableAttribute.DebuggingFlags & DebuggableAttribute.DebuggingModes.DisableOptimizations) != 0;
+            var info = Android.App.Application.Context?.ApplicationInfo;
+            return info != null && (info.Flags & Android.Content.PM.ApplicationInfoFlags.Debuggable) != 0;
         }
 
         /// <summary>

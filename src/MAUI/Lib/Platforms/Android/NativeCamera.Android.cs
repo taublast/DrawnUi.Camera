@@ -1093,6 +1093,12 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         Size optimalSize = null;
         double minDiffRatio = double.MaxValue;
 
+        bool IsBetterSize(Size size, double diffRatio)
+        {
+            return diffRatio < minDiffRatio
+                   || (diffRatio == minDiffRatio && size.Width * size.Height > optimalSize.Width * optimalSize.Height);
+        }
+
         // First pass: find best aspect match within max dimensions
         foreach (Size size in choices)
         {
@@ -1105,7 +1111,8 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
             double diffRatio = Math.Abs(targetRatio - ratio);
             double normalizedDiff = diffRatio / targetRatio;
 
-            if (normalizedDiff <= ratioTolerance && diffRatio < minDiffRatio)
+            // on an equal aspect match the larger size wins, whatever order the camera lists them in
+            if (normalizedDiff <= ratioTolerance && IsBetterSize(size, diffRatio))
             {
                 optimalSize = size;
                 minDiffRatio = diffRatio;
@@ -1122,7 +1129,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
                     double ratio = (double)size.Width / size.Height;
                     double diffRatio = Math.Abs(targetRatio - ratio);
 
-                    if (diffRatio < minDiffRatio)
+                    if (IsBetterSize(size, diffRatio))
                     {
                         optimalSize = size;
                         minDiffRatio = diffRatio;

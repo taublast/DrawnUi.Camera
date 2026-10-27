@@ -1545,17 +1545,21 @@ public partial class SkiaCamera
 
                         try
                         {
-                            // Fire ML hook — raw SKImage before BeginFrame / ProcessFrame overlays.
-                            // captured.Image is already in display orientation — no further rotation needed.
-                            var rawImg = captured?.Image;
-                            if (rawImg != null)
-                                OnRawFrameAvailable(CreateRawCameraFrameInternal(rawImg, 0));
-
+                            // the encoder's EGL context may only be used on the encoder's GL thread
+                            var submitted = droidEnc.RunOnEncoderThread(() =>
+                            {
                             using (droidEnc.BeginFrame(elapsedLocal, out var canvas, out var info))
                             {
+                                // Fire ML hook — raw SKImage before ProcessFrame overlays, with the encoder's
+                                // context current (TryGetRgba may scale on the encoder's GRContext).
+                                // captured.Image is already in display orientation — no further rotation needed.
+                                var rawImg = captured?.Image;
+                                if (rawImg != null)
+                                    OnRawFrameAvailable(CreateRawCameraFrameInternal(rawImg, 0));
+
                                 var img = captured?.Image;
                                 if (img == null)
-                                    return;
+                                    return false;
 
                                 var rects = GetAspectFillRects(img.Width, img.Height, info.Width, info.Height);
 
@@ -1612,9 +1616,14 @@ public partial class SkiaCamera
                             }
 
                             var __sw = System.Diagnostics.Stopwatch.StartNew();
-                            await droidEnc.SubmitFrameAsync();
+                            droidEnc.SubmitFrameAsync().GetAwaiter().GetResult(); // completes synchronously
                             __sw.Stop();
                             _diagLastSubmitMs = __sw.Elapsed.TotalMilliseconds;
+                            return true;
+                            });
+                            if (!submitted)
+                                return;
+
                             System.Threading.Interlocked.Increment(ref _diagSubmittedFrames);
                             CalculateRecordingFps();
                         }

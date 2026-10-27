@@ -319,6 +319,13 @@ namespace DrawnUi.Camera
         private System.Threading.Thread _gpuEncodingThread;
         private System.Threading.ManualResetEventSlim _gpuFrameSignal;
         private volatile bool _stopGpuThread = false;
+
+        // The GPU encoding thread is the encoder's only GL thread: it creates the EGL context and is the only
+        // thread that ever makes it current (setup, warm-up, frames, teardown). A context left current on another
+        // thread makes every later eglMakeCurrent fail with EGL_BAD_ACCESS on strict drivers.
+        private readonly System.Collections.Concurrent.ConcurrentQueue<Action> _glWork = new();
+        private volatile int _glThreadId;
+        private volatile bool _gpuFramesStopped;
         private volatile bool _gpuFrameReady = false;
 
         // Muxer writer thread — offloads synchronous disk I/O from the encoding thread,
@@ -685,11 +692,11 @@ namespace DrawnUi.Camera
             }
             else
             {
-                // Set up EGL context bound to the codec surface
-                SetupEglForCodecSurface();
-
                 // Start GPU encoding thread for async frame processing (decouples camera from encoding)
                 StartGpuEncodingThread();
+
+                // Set up EGL context bound to the codec surface, on the GL thread that owns it
+                RunOnGlThread(SetupEglForCodecSurface);
             }
 
             // CRITICAL: Warm up encoder BEFORE accepting any frames (professional pattern)
@@ -809,6 +816,8 @@ namespace DrawnUi.Camera
                 }
                 else
                 {
+                RunOnGlThread(() =>
+                {
                 // Step 1: Make EGL context current and set up Skia
                 MakeCurrent();
 
@@ -842,6 +851,10 @@ namespace DrawnUi.Camera
                 EGLExt.EglPresentationTimeANDROID(_eglDisplay, _eglSurface, 0);
                 EGL14.EglSwapBuffers(_eglDisplay, _eglSurface);
 
+                // Unbind context
+                try { EGL14.EglMakeCurrent(_eglDisplay, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext); } catch { }
+                });
+
                 // Step 3: Aggressively drain until FORMAT_CHANGED event fires
                 System.Diagnostics.Debug.WriteLine($"[AndroidEncoder] Waiting for FORMAT_CHANGED event (encoder ready signal)...");
                 var timeout = DateTime.Now.AddSeconds(10);  // 10 second timeout (generous)
@@ -856,9 +869,6 @@ namespace DrawnUi.Camera
                         await Task.Delay(50);  // Brief pause between drain attempts
                     }
                 }
-
-                // Unbind context
-                try { EGL14.EglMakeCurrent(_eglDisplay, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext); } catch { }
                 } // end else (GPU path)
 
                 if (_encoderReady)
@@ -1996,6 +2006,7 @@ namespace DrawnUi.Camera
 
             _gpuFrameSignal = new System.Threading.ManualResetEventSlim(false);
             _stopGpuThread = false;
+            _gpuFramesStopped = false;
             _gpuFrameReady = false;
             _gpuEncodingThread = new System.Threading.Thread(GpuEncodingLoop)
             {
@@ -2008,21 +2019,80 @@ namespace DrawnUi.Camera
         }
 
         /// <summary>
-        /// Stop the GPU encoding thread.
-        /// Called when recording stops.
+        /// Stop processing GPU frames: no frame is encoded once this returns.
+        /// Called when recording stops. The thread itself stays for the EGL teardown, see <see cref="TearDownEgl"/>.
         /// </summary>
         private void StopGpuEncodingThread()
         {
             if (_gpuEncodingThread == null) return;
 
+            // queued work runs between frames, so this returns after a frame in progress
+            RunOnGlThread(() => _gpuFramesStopped = true);
+            _gpuFrameReady = false;
+            System.Diagnostics.Debug.WriteLine("[AndroidEncoder] GPU frame processing stopped");
+        }
+
+        /// <summary>
+        /// Ends the GPU encoding thread, after its EGL resources were released on it.
+        /// </summary>
+        private void ExitGpuEncodingThread()
+        {
+            if (_gpuEncodingThread == null) return;
+
             _stopGpuThread = true;
             _gpuFrameSignal?.Set(); // Wake thread to exit
-            _gpuEncodingThread?.Join(1000);
+            if (_gpuEncodingThread != System.Threading.Thread.CurrentThread)
+                _gpuEncodingThread.Join(1000);
             _gpuEncodingThread = null;
-            _gpuFrameSignal?.Dispose();
-            _gpuFrameSignal = null;
             _gpuFrameReady = false;
             System.Diagnostics.Debug.WriteLine("[AndroidEncoder] GPU encoding thread stopped");
+        }
+
+        /// <summary>
+        /// Runs work that uses the encoder's EGL context on the encoder's GL thread and waits for it.
+        /// Runs it inline when called on that thread, or when there is no GL thread (byte-buffer mode, or after teardown).
+        /// </summary>
+        private void RunOnGlThread(Action work)
+        {
+            if (_gpuEncodingThread == null || Environment.CurrentManagedThreadId == _glThreadId)
+            {
+                work();
+                return;
+            }
+
+            Exception error = null;
+            var done = new System.Threading.ManualResetEventSlim(false);
+            _glWork.Enqueue(() =>
+            {
+                try { work(); }
+                catch (Exception e) { error = e; }
+                finally { done.Set(); }
+            });
+            _gpuFrameSignal?.Set();
+
+            if (!done.Wait(5000))
+                throw new TimeoutException("Encoder GL thread did not respond");
+            if (error != null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+        }
+
+        private T RunOnGlThread<T>(Func<T> work)
+        {
+            T result = default;
+            RunOnGlThread(() => { result = work(); });
+            return result;
+        }
+
+        /// <summary>
+        /// Runs a caller's drawing into the encoder (BeginFrame, drawing on its canvas, SubmitFrameAsync) on the
+        /// encoder's GL thread, the only thread that may use the encoder's EGL context.
+        /// </summary>
+        public T RunOnEncoderThread<T>(Func<T> work) => RunOnGlThread(work);
+
+        private void RunGlWork()
+        {
+            while (_glWork.TryDequeue(out var work))
+                work();
         }
 
         /// <summary>
@@ -2031,6 +2101,8 @@ namespace DrawnUi.Camera
         /// </summary>
         private void GpuEncodingLoop()
         {
+            _glThreadId = Environment.CurrentManagedThreadId;
+
             while (!_stopGpuThread)
             {
                 try
@@ -2042,12 +2114,17 @@ namespace DrawnUi.Camera
                     break;
                 }
 
+                // reset before running queued work, so work queued meanwhile wakes the next wait
+                if (_gpuFramesStopped || !_gpuFrameReady)
+                    _gpuFrameSignal?.Reset();
+
+                RunGlWork();
+
                 if (_stopGpuThread) break;
 
                 // Check if frame is ready
-                if (!_gpuFrameReady)
+                if (_gpuFramesStopped || !_gpuFrameReady)
                 {
-                    _gpuFrameSignal?.Reset();
                     continue;
                 }
 
@@ -2078,6 +2155,9 @@ namespace DrawnUi.Camera
                     System.Diagnostics.Debug.WriteLine($"[AndroidEncoder] GpuEncodingLoop error: {ex.Message}");
                 }
             }
+
+            RunGlWork();
+            _glThreadId = 0;
         }
 
         /// <summary>
@@ -2377,6 +2457,18 @@ namespace DrawnUi.Camera
                 return false;
             }
 
+            // the camera texture lives in the encoder's EGL context: none in byte-buffer mode
+            if (_useByteBufferInput || _eglContext == EGL14.EglNoContext)
+            {
+                System.Diagnostics.Debug.WriteLine("[AndroidEncoder] GPU camera path needs the encoder's EGL context");
+                return false;
+            }
+
+            return RunOnGlThread(() => InitializeGpuCameraPathOnGlThread(isFrontCamera, cameraWidth, cameraHeight));
+        }
+
+        private bool InitializeGpuCameraPathOnGlThread(bool isFrontCamera, int cameraWidth, int cameraHeight)
+        {
             try
             {
                 // Ensure EGL context is current
@@ -2645,11 +2737,28 @@ namespace DrawnUi.Camera
         /// </summary>
         public void DisposeGpuCameraPath()
         {
-            _gpuFrameProvider?.Stop();
-            _gpuFrameProvider?.Dispose();
-            _gpuFrameProvider = null;
-            _useGpuCameraPath = false;
+            RunOnGlThread(() =>
+            {
+                if (_gpuFrameProvider != null)
+                {
+                    // the provider's GL objects belong to the encoder's context
+                    bool bound = TryMakeCurrent();
+                    _gpuFrameProvider.Stop();
+                    _gpuFrameProvider.Dispose();
+                    if (bound)
+                        try { EGL14.EglMakeCurrent(_eglDisplay, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext); } catch { }
+                }
+                _gpuFrameProvider = null;
+                _useGpuCameraPath = false;
+            });
             System.Diagnostics.Debug.WriteLine("[AndroidEncoder] GPU camera path disposed");
+        }
+
+        private bool TryMakeCurrent()
+        {
+            if (_eglDisplay == EGL14.EglNoDisplay || _eglSurface == EGL14.EglNoSurface || _eglContext == EGL14.EglNoContext)
+                return false;
+            return EGL14.EglMakeCurrent(_eglDisplay, _eglSurface, _eglSurface, _eglContext);
         }
 
         public async Task AddFrameAsync(SKBitmap bitmap, TimeSpan timestamp)
@@ -4009,6 +4118,30 @@ namespace DrawnUi.Camera
 
         private void TearDownEgl()
         {
+            if (_gpuEncodingThread != null)
+            {
+                try { RunOnGlThread(TearDownEglOnGlThread); }
+                catch (Exception e) { System.Diagnostics.Debug.WriteLine($"[AndroidEncoder] TearDownEgl: {e.Message}"); }
+                ExitGpuEncodingThread();
+                return;
+            }
+
+            TearDownEglOnGlThread();
+        }
+
+        private void TearDownEglOnGlThread()
+        {
+            // GL resources are released with the encoder's context current
+            TryMakeCurrent();
+
+            if (_gpuFrameProvider != null)
+            {
+                _gpuFrameProvider.Stop();
+                _gpuFrameProvider.Dispose();
+                _gpuFrameProvider = null;
+                _useGpuCameraPath = false;
+            }
+
             _cpuSurface?.Dispose();
             _cpuSurface = null;
 

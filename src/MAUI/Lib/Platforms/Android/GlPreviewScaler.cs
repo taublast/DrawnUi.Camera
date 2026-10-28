@@ -34,12 +34,6 @@ namespace DrawnUi.Camera
         // Double-buffered pinned image pool — zero per-frame allocation for pixel data
         private SkiaCpuImagePool _imagePool;
 
-        // Double-buffered PBOs for async glReadPixels (mirrors GlPreviewRenderer pattern)
-        private int[] _pbos = new int[2];
-        private int _currentPbo = 0;
-        private bool _pbosInitialized = false;
-        private bool _firstPboFrame = true;
-
         // Semaphore backpressure: max 2 frames in flight — mirrors MetalPreviewScaler.MaxFramesInFlight
         // Wait(0) is non-blocking: drop frame immediately if GPU is busy rather than queuing
         private System.Threading.SemaphoreSlim _gpuSemaphore = new System.Threading.SemaphoreSlim(2, 2);
@@ -99,11 +93,8 @@ namespace DrawnUi.Camera
 
                 if (!_readbackOnly)
                 {
-                    // Pool owns the two pinned pixel buffers — PBO maps directly into them.
+                    // Pool owns the two pinned pixel buffers — glReadPixels writes directly into them.
                     _imagePool = new SkiaCpuImagePool(outputWidth, outputHeight);
-
-                    // Async PBO double-buffer setup (must happen after EGL context is current).
-                    SetupPbos(outputWidth * outputHeight * 4);
                 }
 
                 _isInitialized = true;
@@ -119,33 +110,20 @@ namespace DrawnUi.Camera
             }
         }
 
-        private void SetupPbos(int byteSize)
-        {
-            GLES30.GlGenBuffers(2, _pbos, 0);
-            for (int i = 0; i < 2; i++)
-            {
-                GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, _pbos[i]);
-                GLES30.GlBufferData(GLES30.GlPixelPackBuffer, byteSize, null, GLES30.GlStreamRead);
-            }
-            GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, 0);
-            _pbosInitialized = true;
-            _firstPboFrame = true;
-            System.Diagnostics.Debug.WriteLine($"[GlPreviewScaler] PBOs created: 2 × {byteSize} bytes");
-        }
-
         /// <summary>
         /// Downscale the current encoder framebuffer (FBO 0) to preview size and read back as SKImage.
         /// Must be called on GL thread after canvas.Flush()+grContext.Flush(), before EglSwapBuffers.
         ///
-        /// Uses double-buffered PBOs for async readback — no GPU pipeline stall.
-        /// Semaphore backpressure (MaxFramesInFlight=2): returns null immediately if GPU is busy,
+        /// Reads the pixels straight into the pool's pinned write slot, not through a mapped pixel buffer:
+        /// on Mali GPUs mapped buffer memory is uncached and copying a frame out of it took ~87 ms.
+        /// Semaphore backpressure (MaxFramesInFlight=2): returns null immediately if busy,
         /// dropping the frame rather than stalling. Mirrors MetalPreviewScaler behavior.
         ///
-        /// Returns null on frame drop, failure, or first frame (PBO warm-up).
+        /// Returns null on frame drop or failure.
         /// </summary>
         public SKImage ScaleAndReadback(int sourceFbo = 0)
         {
-            if (!_isInitialized || _readbackOnly || !_pbosInitialized)
+            if (!_isInitialized || _readbackOnly)
                 return null;
 
             // Non-blocking semaphore check: drop frame if GPU already has 2 in flight.
@@ -165,48 +143,15 @@ namespace DrawnUi.Camera
                     GLES20.GlColorBufferBit,
                     GLES20.GlLinear);
 
-                // 2. Kick async readback into current PBO — returns immediately, no GPU stall.
-                // GPU writes asynchronously; we read the *previous* PBO whose write finished
-                // during the preceding frame's render work.
+                // 2. Read back straight into the pool's write slot
                 GLES30.GlBindFramebuffer(GLES30.GlReadFramebuffer, _previewFbo);
-                int current = _currentPbo;
-                int previous = 1 - current;
-                GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, _pbos[current]);
-                GLES30.GlReadPixels(0, 0, _outputWidth, _outputHeight,
-                    GLES20.GlRgba, GLES20.GlUnsignedByte, 0); // offset=0 → async into PBO
-                GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, 0);
-                _currentPbo = previous; // swap for next call
+                GLES20.GlReadPixels(0, 0, _outputWidth, _outputHeight,
+                    GLES20.GlRgba, GLES20.GlUnsignedByte, _imagePool.GetWriteDirectBuffer());
+                var image = _imagePool.CommitAndGetImage();
 
                 // 3. Restore default FBO for subsequent EglSwapBuffers
                 GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, 0);
 
-                // 4. First frame: previous PBO has no data yet — skip image creation
-                if (_firstPboFrame)
-                {
-                    _firstPboFrame = false;
-                    _gpuSemaphore.Release();
-                    return null;
-                }
-
-                // 5. Map previous PBO — GPU finished writing it while we rendered the current frame.
-                // Write directly into the pool's write slot — no intermediate buffer.
-                var writeBuffer = _imagePool.GetWriteBuffer();
-                GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, _pbos[previous]);
-                var mapped = GLES30.GlMapBufferRange(
-                    GLES30.GlPixelPackBuffer, 0, writeBuffer.Length,
-                    GLES30.GlMapReadBit) as Java.Nio.ByteBuffer;
-
-                SKImage image = null;
-                if (mapped != null)
-                {
-                    mapped.Rewind();
-                    CopyBufferToManaged(mapped, writeBuffer, writeBuffer.Length);
-                    GLES30.GlUnmapBuffer(GLES30.GlPixelPackBuffer);
-                    mapped.Dispose(); // release JNI wrapper immediately; don't wait for GC
-                    image = _imagePool.CommitAndGetImage();
-                }
-
-                GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, 0);
                 _gpuSemaphore.Release();
                 return image;
             }
@@ -214,7 +159,6 @@ namespace DrawnUi.Camera
             {
                 System.Diagnostics.Debug.WriteLine($"[GlPreviewScaler] ScaleAndReadback error: {ex.Message}");
                 try { GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, 0); } catch { }
-                try { GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, 0); } catch { }
                 _gpuSemaphore.Release();
                 return null;
             }
@@ -296,13 +240,6 @@ namespace DrawnUi.Camera
                 {
                     GLES20.GlDeleteRenderbuffers(1, new int[] { _previewRbo }, 0);
                     _previewRbo = 0;
-                }
-
-                if (_pbosInitialized && (_pbos[0] != 0 || _pbos[1] != 0))
-                {
-                    GLES30.GlDeleteBuffers(2, _pbos, 0);
-                    _pbos[0] = _pbos[1] = 0;
-                    _pbosInitialized = false;
                 }
 
                 _syncReadbackBuffer?.Dispose();

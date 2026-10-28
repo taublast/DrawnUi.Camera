@@ -341,8 +341,8 @@ public partial class SkiaCamera : SkiaControl
         propertyChanged: NeedRestart);
 
     /// <summary>
-    /// Index of the audio device to use. -1 for default.
-    /// Use GetAvailableAudioDevicesAsync() to get the list of devices.
+    /// Index of the audio device to use: an index into the list returned by GetAvailableAudioDevicesAsync().
+    /// -1 (default) keeps the system's default input and does not pin a device.
     /// </summary>
     public int AudioDeviceIndex
     {
@@ -2830,7 +2830,8 @@ public partial class SkiaCamera : SkiaControl
     private VideoFormat? _currentVideoFormat;
 
     /// <summary>
-    /// Get available microphones/audio capture devices.
+    /// Get available microphones/audio capture devices, in the order AudioDeviceIndex counts them.
+    /// On iOS and Mac Catalyst these are the AVAudioSession inputs.
     /// </summary>
     /// <returns>List of device names</returns>
     public virtual async Task<List<string>> GetAvailableAudioDevicesAsync()

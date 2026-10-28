@@ -28,14 +28,20 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.95
+## What's New  1.10.7.96
 
- * Pause and resume a video recording: `PauseVideoRecording()` and `ResumeVideoRecording()`, with `IsRecordingPaused` and `IsRecordingPausedChanged`. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync, and the recording duration leaves it out. Stopping while paused saves the clip. Windows, and iOS with `UseRealtimeVideoProcessing`; Android throws `NotSupportedException` for now.
- * iOS: video frames that arrive before the camera is on are released at once instead of staying in memory until the next garbage collection.
- * Camera switching works as in 1.10.7.91: the 1.10.7.92 and 1.10.7.93 switching changes are not in this version.
+ * Android: photos and the fallback preview are converted from the camera's YUV frames by a GPU shader. The package no longer uses RenderScript, and it is built on DrawnUi 1.10.8.3, which no longer brings `AppoMobi.Maui.Native.Android`.
+ * Android: smooth preview on Mali GPUs: each frame is read straight into its image buffer, at a fraction of the CPU time per frame.
+ * Android: the preview and the recording encoder each run all their GPU work on one thread, so video records on every DrawnUi canvas backend, Vulkan included, and the preview works on the Android emulator.
+ * Android: the selfie camera follows the Apple mirror rule: preview frames arrive mirrored, and `MirrorSavedSelfiePhoto` decides whether photos and clips keep the mirror, so preview, photo and clip agree on both platforms, also while recording.
+ * Android: a camera that cannot start reports `HardwareState.Error`, and the preview size prefers the larger size when two sizes match the aspect equally.
+ * Apple: `GetAvailableAudioDevicesAsync` lists the inputs `AudioDeviceIndex` picks from, and -1 keeps the system's own input.
+ * Preview audio keeps running after an audio-only recording.
 
 ## Previously 
 
+ * Pause and resume a video recording: `PauseVideoRecording()` and `ResumeVideoRecording()`, with `IsRecordingPaused` and `IsRecordingPausedChanged`. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync, and the recording duration leaves it out. Stopping while paused saves the clip. Windows, and iOS with `UseRealtimeVideoProcessing`; Android throws `NotSupportedException` for now.
+ * iOS: video frames that arrive before the camera is on are released at once instead of staying in memory until the next garbage collection.
  * `TakePicture` with the camera off, or during another capture, raises `CaptureFailed` instead of waiting forever.
  * A failed recording stop raises `RecordingFailed` once.
  * Photo and video metadata: dates, exposure bias, brightness and GPS minutes and seconds are no longer lost or shifted, also on phones set to a language with a decimal comma, and video dates are written in UTC.
@@ -46,8 +52,6 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * MAUI: you can now set an image instead of the real camera source: put it in `MockSource`. The real camera stays off and no camera permission is asked, while preview shaders, frame processing and taking photos work with your image as if it came from the camera. Video recording is not available while an image is set. See the [Usage Guide](docs/usage-guide.md#17-mock-source-a-still-image-instead-of-the-camera).
  * iOS: on iOS 26, taking a photo with stabilization on no longer throws and logs an error on every capture.
  * iOS: passkey sign-in codes. A site that offers "sign in with a passkey on another device" shows a QR code; `DetectedCode.IsPasskeySignIn` recognizes it, and `SkiaCamera.StartPasskeySignInAsync(code)` hands it to the system, which shows its own passkey sheet and signs the user in. Your app never sees a key. Call it from a tap. `SkiaCamera.IsPasskeySignInSupported` tells whether the system can take the code: iOS 16 and later for now. See the [Usage Guide](docs/usage-guide.md#passkey-sign-in-codes).
- * iOS: the camera finds QR codes and barcodes in the live preview. Set `CodeDetection` (for example `CameraCodeTypes.Qr`) and listen to `CodesDetected`: every code comes with its text and its corners, and `TryMapPreviewPoint` turns a corner into a position on the canvas. The system's capture pipeline does the detection, so your code reads no frame pixels for it and nothing is added to the render thread. Off by default, and off costs nothing. `SkiaCamera.IsCodeDetectionSupported` tells whether the platform can do it: iOS for now. See the [Usage Guide](docs/usage-guide.md#16-code-detection-qr-and-barcodes).
- * Windows: the camera preview and video recording now run on the GPU (`UseGpuProcessing`, on by default). Frames reach the screen and the encoder without a CPU copy, hardware video encoders are used, and CPU use drops. When the machine can't do it (another GPU, a driver refusing the device) the camera falls back to the previous path by itself, never a black preview. A camera switched on before its canvas first draws still gets the GPU path, and each camera frame takes less work, with its Direct3D surface released right after use.
 
 ## Extending SkiaCamera
 

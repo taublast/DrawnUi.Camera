@@ -1092,8 +1092,8 @@ public partial class SkiaCamera : SkiaControl
             Display.Aspect = this.Aspect;
 
             var mirrorX = this.MirrorPreviewX;
-#if IOS || MACCATALYST
-            // The raw Apple preview is mirrored at the source for the selfie camera. While the
+#if IOS || MACCATALYST || ANDROID
+            // The raw Apple and Android preview is mirrored at the source for the selfie camera. While the
             // encoder frames feed the preview they carry the clip's own mirroring, which is off
             // when MirrorSavedSelfiePhoto is true, so the display flip is inverted for that time
             // to keep the screen identical before, during and after recording.

@@ -8,6 +8,12 @@ namespace DrawnUi.Camera;
 
 public partial class SkiaCamera
 {
+    /// <summary>
+    /// The selfie camera's SurfaceTexture frames arrive mirrored, as on Apple. Same rule as the selfie still and as
+    /// Apple's movie output: the clip keeps that mirror only when MirrorSavedSelfiePhoto is false.
+    /// </summary>
+    bool UnmirrorSelfieClip => MirrorSavedSelfiePhoto && (CameraDevice?.Position ?? Facing) == CameraPosition.Selfie;
+
     private int _androidAwaitingPostStopPreviewFrame;
 
     internal bool IsAwaitingFreshPreviewAfterRecordingStop =>
@@ -1310,10 +1316,9 @@ public partial class SkiaCamera
             // Try to initialize GPU camera path for zero-copy frame capture.
             if (GpuCameraFrameProvider.IsSupported())
             {
-                bool isFrontCamera = false;
                 // Pass raw camera dimensions for SurfaceTexture - camera outputs frames in native orientation
                 // Transform matrix from SurfaceTexture handles rotation to match encoder dimensions
-                useGpuCameraPath = androidEncoder.InitializeGpuCameraPath(isFrontCamera, rawWidth, rawHeight);
+                useGpuCameraPath = androidEncoder.InitializeGpuCameraPath(UnmirrorSelfieClip, rawWidth, rawHeight);
                 if (useGpuCameraPath)
                 {
                     Debug.WriteLine($"[StartRealtimeVideoProcessing] GPU camera path ENABLED (camera={rawWidth}x{rawHeight})");
@@ -1740,8 +1745,7 @@ public partial class SkiaCamera
             // GPU path: camera surface physically bound to old encoder's EGL context.
             // We must stop the old GPU session, init a new EGL context on the new encoder,
             // then create a new GPU camera session targeting the new encoder's surface.
-            bool isFrontCamera = false;
-            bool newGpuOk = newEncoder.InitializeGpuCameraPath(isFrontCamera, _cameraRawWidth, _cameraRawHeight);
+            bool newGpuOk = newEncoder.InitializeGpuCameraPath(UnmirrorSelfieClip, _cameraRawWidth, _cameraRawHeight);
             var newGpuSurface = newGpuOk ? newEncoder.GpuFrameProvider?.GetCameraOutputSurface() : null;
 
             if (newGpuOk && newGpuSurface != null)

@@ -2446,7 +2446,7 @@ namespace DrawnUi.Camera
         /// Initialize GPU camera path with SurfaceTexture.
         /// Must be called on GL thread with valid EGL context (after SetupEglForCodecSurface).
         /// </summary>
-        /// <param name="isFrontCamera">True if using front/selfie camera</param>
+        /// <param name="isFrontCamera">True to flip the encoded picture left-right (undoes the selfie camera's source mirror)</param>
         /// <param name="cameraWidth">Camera's native output width (before rotation correction)</param>
         /// <param name="cameraHeight">Camera's native output height (before rotation correction)</param>
         public bool InitializeGpuCameraPath(bool isFrontCamera, int cameraWidth = 0, int cameraHeight = 0)

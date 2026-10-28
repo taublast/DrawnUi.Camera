@@ -48,16 +48,13 @@ uniform int uMirror;
 out vec2 vTexCoord;
 
 void main() {
-    gl_Position = vec4(aPosition, 0.0, 1.0);
+    // Mirror the output horizontally: done on the position, so it is a left-right flip of the
+    // picture whatever rotation the SurfaceTexture transform applies to the texture
+    gl_Position = vec4(uMirror == 1 ? -aPosition.x : aPosition.x, aPosition.y, 0.0, 1.0);
 
     // Apply SurfaceTexture transform matrix
     vec4 transformedCoord = uTransformMatrix * vec4(aTexCoord, 0.0, 1.0);
     vTexCoord = transformedCoord.xy;
-
-    // Mirror horizontally for front camera
-    if (uMirror == 1) {
-        vTexCoord.x = 1.0 - vTexCoord.x;
-    }
 }";
 
         // Fragment shader for external OES texture sampling
@@ -97,14 +94,10 @@ uniform int uMirror;
 varying vec2 vTexCoord;
 
 void main() {
-    gl_Position = vec4(aPosition, 0.0, 1.0);
+    gl_Position = vec4(uMirror == 1 ? -aPosition.x : aPosition.x, aPosition.y, 0.0, 1.0);
 
     vec4 transformedCoord = uTransformMatrix * vec4(aTexCoord, 0.0, 1.0);
     vTexCoord = transformedCoord.xy;
-
-    if (uMirror == 1) {
-        vTexCoord.x = 1.0 - vTexCoord.x;
-    }
 }";
 
         public bool IsInitialized => _initialized;
@@ -230,7 +223,7 @@ void main() {
         /// </summary>
         /// <param name="textureId">OES texture ID from SurfaceTexture</param>
         /// <param name="transformMatrix">4x4 transform matrix from SurfaceTexture.GetTransformMatrix()</param>
-        /// <param name="mirror">True to mirror horizontally (for front camera)</param>
+        /// <param name="mirror">True to flip the output picture left-right</param>
         public void Draw(int textureId, float[] transformMatrix, bool mirror)
         {
             if (!_initialized) return;

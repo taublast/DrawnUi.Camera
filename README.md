@@ -28,7 +28,12 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.7.96
+## What's New  1.10.8.31
+
+ * Android: the library requires Android 7.0 (API 24) or newer, the minimum Google Play's automatic app protection accepts.
+ * Built on DrawnUi 1.10.8.3. The version follows DrawnUi's from now on.
+
+## Previously 
 
  * Android: photos and the fallback preview are converted from the camera's YUV frames by a GPU shader. The package no longer uses RenderScript, and it is built on DrawnUi 1.10.8.3, which no longer brings `AppoMobi.Maui.Native.Android`.
  * Android: smooth preview on Mali GPUs: each frame is read straight into its image buffer, at a fraction of the CPU time per frame.
@@ -37,21 +42,11 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * Android: a camera that cannot start reports `HardwareState.Error`, and the preview size prefers the larger size when two sizes match the aspect equally.
  * Apple: `GetAvailableAudioDevicesAsync` lists the inputs `AudioDeviceIndex` picks from, and -1 keeps the system's own input.
  * Preview audio keeps running after an audio-only recording.
-
-## Previously 
-
  * Pause and resume a video recording: `PauseVideoRecording()` and `ResumeVideoRecording()`, with `IsRecordingPaused` and `IsRecordingPausedChanged`. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync, and the recording duration leaves it out. Stopping while paused saves the clip. Windows, and iOS with `UseRealtimeVideoProcessing`; Android throws `NotSupportedException` for now.
  * iOS: video frames that arrive before the camera is on are released at once instead of staying in memory until the next garbage collection.
  * `TakePicture` with the camera off, or during another capture, raises `CaptureFailed` instead of waiting forever.
  * A failed recording stop raises `RecordingFailed` once.
  * Photo and video metadata: dates, exposure bias, brightness and GPS minutes and seconds are no longer lost or shifted, also on phones set to a language with a decimal comma, and video dates are written in UTC.
- * Built on DrawnUi 1.10.7.9 (`DrawnUi.Maui` / `DrawnUi.Net`), with its fixes: switching input off works the same on every control, a drawer no longer stops halfway, no more cut text at in-between screen scales, and `SafeAction` runs on time. Before that, DrawnUi 1.10.7.8 brought the iOS fix for one caret when switching between fields in different canvases.
- * iOS: photos are taken with `AVCapturePhotoOutput`, with settings per shot (flash, quality), and carry the date they were taken (`DateTimeOriginal`, with the time zone offset). At `Max` quality, iPhones with a 48 MP camera now take full 48 MP photos (12 MP before).
- * MAUI: rendering and saving a captured photo makes fewer full-size copies, so a 48 MP photo needs less memory at its peak (about 1.5 GB instead of 2.0 GB).
- * iOS: memory stays flat while the camera is on and while recording: the GPU command buffers of every frame are released, and the audio is no longer kept in memory until the recording stops.
- * MAUI: you can now set an image instead of the real camera source: put it in `MockSource`. The real camera stays off and no camera permission is asked, while preview shaders, frame processing and taking photos work with your image as if it came from the camera. Video recording is not available while an image is set. See the [Usage Guide](docs/usage-guide.md#17-mock-source-a-still-image-instead-of-the-camera).
- * iOS: on iOS 26, taking a photo with stabilization on no longer throws and logs an error on every capture.
- * iOS: passkey sign-in codes. A site that offers "sign in with a passkey on another device" shows a QR code; `DetectedCode.IsPasskeySignIn` recognizes it, and `SkiaCamera.StartPasskeySignInAsync(code)` hands it to the system, which shows its own passkey sheet and signs the user in. Your app never sees a key. Call it from a tap. `SkiaCamera.IsPasskeySignInSupported` tells whether the system can take the code: iOS 16 and later for now. See the [Usage Guide](docs/usage-guide.md#passkey-sign-in-codes).
 
 ## Extending SkiaCamera
 

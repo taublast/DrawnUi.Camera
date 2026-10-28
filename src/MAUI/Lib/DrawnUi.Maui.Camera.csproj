@@ -14,7 +14,7 @@
 
       <UseSource>false</UseSource>
 
-      <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
+      <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
       <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">12.2</SupportedOSPlatformVersion>
       <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
       <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
@@ -23,7 +23,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-      <Version>1.10.7.96</Version>
+      <Version>1.10.8.31</Version>
       <Title>DrawnUI Camera control for .NET MAUI rendered with SkiaSharp</Title>
       <PackageId>DrawnUi.Maui.Camera</PackageId>
       <Description>SkiaCamera control rendered with SkiaSharp and DrawnUI for .NET MAUI on Android, iOS, MacCatalyst and Windows</Description>

@@ -3974,14 +3974,9 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 }
             }
 
-            if (deviceIndex < 0) //cant pass -1 to apple, will throw
-            {
-                deviceIndex = 0;
-            }
-
-            // Select specific audio input device if requested
+            // Select specific audio input device if requested, -1 keeps the system route
             var audioSession = AVAudioSession.SharedInstance();
-            var availableInputs = audioSession.AvailableInputs;
+            var availableInputs = deviceIndex >= 0 ? audioSession.AvailableInputs : null;
             if (availableInputs != null && deviceIndex < availableInputs.Length)
             {
                 var selectedInput = availableInputs[deviceIndex];

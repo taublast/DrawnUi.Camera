@@ -2989,31 +2989,10 @@ public partial class SkiaCamera
 
     protected async Task<List<string>> GetAvailableAudioDevicesPlatform()
     {
-        return await Task.Run(() =>
-        {
-            var detected = new List<string>();
-            try
-            {
-                // AVCaptureDeviceDiscoverySession available iOS 10+
-                var discoverySession = AVCaptureDeviceDiscoverySession.Create(
-                    new AVCaptureDeviceType[] { AVCaptureDeviceType.BuiltInMicrophone },
-                    AVMediaTypes.Audio,
-                    AVCaptureDevicePosition.Unspecified);
-
-                if (discoverySession != null && discoverySession.Devices != null)
-                {
-                    foreach (var device in discoverySession.Devices)
-                    {
-                        detected.Add(device.LocalizedName);
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                System.Diagnostics.Debug.WriteLine($"[SkiaCamera] Audio device discovery error: {e}");
-            }
-            return detected;
-        });
+        // The AVAudioSession inputs, the list AudioDeviceIndex picks from
+        using var capture = new AudioCaptureApple();
+        var devices = await capture.GetAvailableDevicesAsync();
+        return devices.Select(d => d.Name).ToList();
     }
 
     protected async Task<List<string>> GetAvailableAudioCodecsPlatform()

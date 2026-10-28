@@ -161,13 +161,8 @@ public class AudioCaptureApple : IAudioCapture
                     Debug.WriteLine($"[AudioCaptureApple] Audio session mode error: {sessionError}");
                 }
 
-                if (deviceIndex < 0)
-                {
-                    deviceIndex = 0;
-                }
-
-                // Select specific audio input device if requested
-                var availableInputs = audioSession.AvailableInputs;
+                // Select specific audio input device if requested, -1 keeps the system route
+                var availableInputs = deviceIndex >= 0 ? audioSession.AvailableInputs : null;
                 if (availableInputs != null && deviceIndex < availableInputs.Length)
                 {
                     var selectedInput = availableInputs[deviceIndex];

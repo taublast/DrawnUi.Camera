@@ -589,7 +589,9 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
         // YUV→RGB on the GPU (the experimental dual-stream recording mode also comes here while the GL preview
         // is enabled for non-recording preview sessions)
-        var sk = ConvertYuvFrame(image, false, false, fullSizePhoto: false);
+        // the selfie preview is mirrored at the source, as the GPU preview (SurfaceTexture transform) and Apple do
+        var selfie = (FormsControl.CameraDevice?.Position ?? FormsControl.Facing) == CameraPosition.Selfie;
+        var sk = ConvertYuvFrame(image, selfie, false, fullSizePhoto: false);
         if (sk == null) return;
 
         // Build CapturedImage

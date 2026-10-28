@@ -1576,8 +1576,19 @@ public partial class SkiaCamera
                                     canvas.Scale(-1, -1, info.Width / 2f, info.Height / 2f);
                                 }
 
+                                // preview frames of the selfie camera arrive mirrored: same rule as the GPU path
+                                var unmirror = UnmirrorSelfieClip;
+                                if (unmirror)
+                                {
+                                    canvas.Save();
+                                    canvas.Scale(-1, 1, info.Width / 2f, 0);
+                                }
+
                                 RenderFrameForRecording(canvas, img, rects.src, rects.dst);
                                 //canvas.DrawImage(img, rects.src, rects.dst);
+
+                                if (unmirror)
+                                    canvas.Restore();
 
                                 if (isSelfieInLandscape)
                                 {

@@ -1788,6 +1788,14 @@ public partial class SkiaCamera : SkiaControl
             AudioRecordingFailed?.Invoke(this, ex);
             throw;
         }
+        finally
+        {
+            // Restart preview audio if still enabled
+            if (State == HardwareState.On && (CaptureMode == CaptureModeType.Video && EnableAudioRecording || EnableAudioMonitoring))
+            {
+                StartPreviewAudioCapture();
+            }
+        }
     }
 
     /// <summary>

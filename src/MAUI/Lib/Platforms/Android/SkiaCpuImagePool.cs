@@ -9,7 +9,7 @@ namespace DrawnUi.Camera
     /// Pre-allocates two pinned CPU pixel buffers for double-buffered SKImage delivery.
     ///
     /// Usage pattern (zero intermediate copies):
-    ///   1. GetWriteBuffer() — get the current slot's byte[] to fill directly (e.g. via Marshal.Copy from PBO)
+    ///   1. GetWriteBuffer() — get the current slot's byte[] (or GetWriteDirectBuffer() for glReadPixels) to fill directly
     ///   2. CommitAndGetImage() — wrap the filled slot in an SKImage and advance to the other slot
     ///
     /// SKImage.FromPixels with a non-null releaseProc uses SkImage::MakeFromRaster (borrow semantics):
@@ -30,6 +30,7 @@ namespace DrawnUi.Camera
     {
         private readonly GCHandle[] _handles = new GCHandle[2];
         private readonly byte[][] _pixels = new byte[2][];
+        private readonly Java.Nio.ByteBuffer[] _directBuffers = new Java.Nio.ByteBuffer[2];
         private readonly SKImageInfo _info;
         private int _writeSlot;
         private readonly int _byteCount;
@@ -55,10 +56,25 @@ namespace DrawnUi.Camera
         }
 
         /// <summary>
-        /// Returns the current write slot's byte[] for direct filling (e.g. Marshal.Copy from a mapped PBO).
+        /// Returns the current write slot's byte[] for direct filling.
         /// Must be followed by CommitAndGetImage() on the same call site before any concurrent access.
         /// </summary>
         public byte[] GetWriteBuffer() => _pixels[_writeSlot];
+
+        /// <summary>
+        /// The current write slot as a direct Java buffer over the same pinned memory, for GL calls that
+        /// write into a <see cref="Java.Nio.Buffer"/> (glReadPixels). Created once per slot.
+        /// </summary>
+        public Java.Nio.ByteBuffer GetWriteDirectBuffer()
+        {
+            int slot = _writeSlot;
+            if (_directBuffers[slot] == null)
+            {
+                var handle = Android.Runtime.JNIEnv.NewDirectByteBuffer(_handles[slot].AddrOfPinnedObject(), _byteCount);
+                _directBuffers[slot] = Java.Lang.Object.GetObject<Java.Nio.ByteBuffer>(handle, Android.Runtime.JniHandleOwnership.TransferLocalRef);
+            }
+            return _directBuffers[slot];
+        }
 
         /// <summary>
         /// Wraps the current write slot in an SKImage (no pixel copy — borrows pinned memory),
@@ -103,6 +119,8 @@ namespace DrawnUi.Camera
         {
             for (int i = 0; i < 2; i++)
             {
+                _directBuffers[i]?.Dispose();
+                _directBuffers[i] = null;
                 if (_handles[i].IsAllocated)
                     _handles[i].Free();
             }

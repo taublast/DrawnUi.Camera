@@ -31,13 +31,6 @@ namespace DrawnUi.Camera
         private int _sourceFbo;
         private int _sourceRbo;
 
-        // Double-buffered PBOs for async glReadPixels (eliminates GPU pipeline stall)
-        private int[] _pbos = new int[2];
-        private int _currentPbo = 0;
-        private bool _pbosInitialized = false;
-        private bool _firstPboFrame = true;
-        private int _pboBytesSize;
-
         private int _previewWidth;
         private int _previewHeight;
 
@@ -218,10 +211,7 @@ namespace DrawnUi.Camera
                         SetupSourceFbo(cameraWidth, cameraHeight);
                     }
 
-                    // Double-buffered PBOs for async glReadPixels — no GPU stall
-                    SetupPbos(previewWidth, previewHeight);
-
-                    // Pool owns the two pinned pixel buffers — PBO maps directly into them
+                    // Pool owns the two pinned pixel buffers — glReadPixels writes directly into them
                     _imagePool = new SkiaCpuImagePool(previewWidth, previewHeight);
 
                     // CPU Y-flip buffer only needed for non-blit (direct) path
@@ -446,10 +436,9 @@ namespace DrawnUi.Camera
             // Render OES texture — GPU driver does YUV→RGB automatically via samplerExternalOES
             _gpuFrameProvider.RenderToFramebuffer(_previewWidth, _previewHeight, _isFrontCamera);
 
-            // Async PBO readback directly into the pool's write slot — no intermediate buffer
+            // Readback directly into the pool's write slot — no intermediate buffer
             var dest = _imagePool.GetWriteBuffer();
-            if (!ReadPixelsViaPbo(_previewWidth, _previewHeight, dest))
-                return null;
+            ReadPixels(_previewWidth, _previewHeight);
 
             // glReadPixels returns bottom-to-top data. For 90°/0° sensor orientations the
             // SurfaceTexture transform leaves the image inverted in the FBO, so we must flip.
@@ -501,10 +490,9 @@ namespace DrawnUi.Camera
                 GLES20.GlColorBufferBit,
                 GLES20.GlLinear);                             // GPU bilinear filtering
 
-            // 3. Async PBO readback directly into pool's write slot — no intermediate buffer
+            // 3. Readback directly into pool's write slot — no intermediate buffer
             GLES30.GlBindFramebuffer(GLES30.GlReadFramebuffer, _readbackFbo);
-            if (!ReadPixelsViaPbo(_previewWidth, _previewHeight, _imagePool.GetWriteBuffer()))
-                return null;
+            ReadPixels(_previewWidth, _previewHeight);
 
             // 4. No Y-flip needed — blit already flipped on GPU; commit the pool slot
             return _imagePool.CommitAndGetImage();
@@ -574,11 +562,6 @@ namespace DrawnUi.Camera
                 SetupSourceFbo(_cameraWidth, _cameraHeight);
             }
 
-            if (!_pbosInitialized)
-            {
-                SetupPbos(_previewWidth, _previewHeight);
-            }
-
             if (_imagePool == null)
             {
                 _imagePool = new SkiaCpuImagePool(_previewWidth, _previewHeight);
@@ -613,10 +596,6 @@ namespace DrawnUi.Camera
                 _sourceRbo = 0;
             }
 
-            DisposePbos();
-
-            _currentPbo = 0;
-            _firstPboFrame = true;
             _flipRowBuffer = null;
             _imagePool?.Dispose();
             _imagePool = null;
@@ -690,87 +669,14 @@ namespace DrawnUi.Camera
         }
 
         /// <summary>
-        /// Allocate two PBOs for double-buffered async pixel readback.
-        /// Must be called on the GL thread with EGL context current.
+        /// Reads the frame from the bound GL_READ_FRAMEBUFFER straight into the pool's pinned write slot.
+        /// Not through a mapped pixel buffer: on Mali GPUs mapped buffer memory is uncached, and copying a
+        /// 960x1280 frame out of it took 87 ms (preview at 9 fps); the direct read takes about 13 ms.
+        /// Must be called on the GL thread.
         /// </summary>
-        private void SetupPbos(int width, int height)
+        private void ReadPixels(int width, int height)
         {
-            _pboBytesSize = width * height * 4;
-            GLES30.GlGenBuffers(2, _pbos, 0);
-            for (int i = 0; i < 2; i++)
-            {
-                GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, _pbos[i]);
-                GLES30.GlBufferData(GLES30.GlPixelPackBuffer, _pboBytesSize, null, GLES30.GlStreamRead);
-            }
-            GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, 0);
-            _pbosInitialized = true;
-            _firstPboFrame = true;
-            System.Diagnostics.Debug.WriteLine($"[GlPreviewRenderer] PBOs created: 2 × {_pboBytesSize} bytes");
-        }
-
-        /// <summary>
-        /// Delete PBOs. Must be called on the GL thread with EGL context current.
-        /// </summary>
-        private void DisposePbos()
-        {
-            if (_pbosInitialized && _pbos[0] != 0)
-            {
-                GLES30.GlDeleteBuffers(2, _pbos, 0);
-                _pbos[0] = _pbos[1] = 0;
-                _pbosInitialized = false;
-            }
-        }
-
-        /// <summary>
-        /// Issues async glReadPixels into PBO[current] (non-blocking — GPU writes in background),
-        /// then maps PBO[previous] and copies pixels directly into <paramref name="dest"/>.
-        /// Returns false on the first frame (previous PBO not yet populated) — caller should skip.
-        /// Must be called on the GL thread with the readback FBO bound as GL_READ_FRAMEBUFFER.
-        /// </summary>
-        private bool ReadPixelsViaPbo(int width, int height, byte[] dest)
-        {
-            int current = _currentPbo;
-            int previous = 1 - current;
-
-            // Kick off async readback into current PBO — returns immediately, no GPU stall
-            // GLES30 overload with int offset (not Buffer) is the PBO-path signature
-            GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, _pbos[current]);
-            GLES30.GlReadPixels(0, 0, width, height, GLES20.GlRgba, GLES20.GlUnsignedByte, 0);
-            GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, 0);
-
-            _currentPbo = previous; // swap for next call
-
-            // First frame: previous PBO has no data yet
-            if (_firstPboFrame)
-            {
-                _firstPboFrame = false;
-                return false;
-            }
-
-            // Map previous PBO — GPU finished writing it during the last frame's render work
-            GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, _pbos[previous]);
-            var mappedBuffer = GLES30.GlMapBufferRange(GLES30.GlPixelPackBuffer, 0, _pboBytesSize, GLES30.GlMapReadBit) as Java.Nio.ByteBuffer;
-
-            bool hasData = false;
-            if (mappedBuffer != null)
-            {
-                mappedBuffer.Rewind();
-                var mappedPtr = mappedBuffer.GetDirectBufferAddress();
-                if (mappedPtr != IntPtr.Zero)
-                {
-                    Marshal.Copy(mappedPtr, dest, 0, _pboBytesSize);
-                }
-                else
-                {
-                    mappedBuffer.Get(dest, 0, _pboBytesSize);
-                }
-                GLES30.GlUnmapBuffer(GLES30.GlPixelPackBuffer);
-                mappedBuffer.Dispose(); // release JNI wrapper immediately; don't wait for GC
-                hasData = true;
-            }
-
-            GLES30.GlBindBuffer(GLES30.GlPixelPackBuffer, 0);
-            return hasData;
+            GLES20.GlReadPixels(0, 0, width, height, GLES20.GlRgba, GLES20.GlUnsignedByte, _imagePool.GetWriteDirectBuffer());
         }
 
         #endregion

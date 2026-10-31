@@ -2696,6 +2696,10 @@ public partial class SkiaCamera : SkiaControl
         {
             Metadata.ApplyGpsCoordinates(captured.Meta, LocationLat, LocationLon);
         }
+        else if (InjectGpsLocation && !captured.Meta.GpsLatitude.HasValue)
+        {
+            Super.Log("[SkiaCamera] GPS: no location to save with this photo (RefreshGpsLocation found none yet)");
+        }
 
         await using var stream = CreateOutputStreamRotated(captured, false, SKEncodedImageFormat.Jpeg, quality);
 
@@ -3113,16 +3117,37 @@ public partial class SkiaCamera : SkiaControl
             GpsBusy = true;
 
             // Check and request location permission (must be on main thread)
-            var status = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
-            if (!IsLocationPermissionAllowed(status))
+            if (!await IsLocationPermissionAllowedNowAsync())
             {
-                status = await Permissions.RequestAsync<Permissions.LocationWhenInUse>();
+                var status = await Permissions.RequestAsync<Permissions.LocationWhenInUse>();
                 if (!IsLocationPermissionAllowed(status))
                 {
-                    Debug.WriteLine("[SkiaCamera] Location permission denied");
+                    Super.Log($"[SkiaCamera] GPS: location permission {status}, no location");
                     return;
                 }
             }
+
+#if ANDROID
+            // approximate only: MAUI's Geolocation would ask the user again to upgrade to precise, so Android's own
+            // LocationManager answers, at the accuracy the grant allows
+            if (HasAndroidLocationPermission(out var precise) && !precise)
+            {
+                Super.Log("[SkiaCamera] GPS: approximate location allowed, fetching");
+                var approximate = await GetApproximateLocationAsync(msTimeout);
+                if (approximate != null)
+                {
+                    LocationLat = approximate.Latitude;
+                    LocationLon = approximate.Longitude;
+                    Super.Log($"[SkiaCamera] GPS: approximate location used (accuracy {approximate.Accuracy:0} m, provider {approximate.Provider})");
+                }
+                else
+                {
+                    Super.Log($"[SkiaCamera] GPS: no approximate location within {msTimeout} ms");
+                }
+                return;
+            }
+#endif
+            Super.Log("[SkiaCamera] GPS: location allowed, fetching");
 
             // Try cached location first (instant, no GPS fix needed)
             try
@@ -3132,19 +3157,19 @@ public partial class SkiaCamera : SkiaControl
                 {
                     LocationLat = location.Latitude;
                     LocationLon = location.Longitude;
-                    Debug.WriteLine(
-                        $"[SkiaCamera] Cached location: {location.Latitude}, {location.Longitude}");
+                    Super.Log($"[SkiaCamera] GPS: last known location used (accuracy {location.Accuracy:0} m, {(DateTimeOffset.UtcNow - location.Timestamp).TotalSeconds:0} s old)");
                     return;
                 }
+                Super.Log("[SkiaCamera] GPS: no last known location, requesting a fix");
             }
             catch (FeatureNotSupportedException)
             {
-                Debug.WriteLine("[SkiaCamera] Geolocation not supported on this device");
+                Super.Log("[SkiaCamera] GPS: geolocation not supported on this device");
                 return;
             }
             catch (FeatureNotEnabledException)
             {
-                Debug.WriteLine("[SkiaCamera] Geolocation not enabled on device");
+                Super.Log("[SkiaCamera] GPS: location is turned off on the device");
                 return;
             }
 
@@ -3153,7 +3178,7 @@ public partial class SkiaCamera : SkiaControl
         }
         catch (Exception ex)
         {
-            Debug.WriteLine($"[SkiaCamera] RefreshGpsLocation failed: {ex.Message}");
+            Super.Log($"[SkiaCamera] GPS: location fetch failed: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
@@ -3174,28 +3199,18 @@ public partial class SkiaCamera : SkiaControl
 
             if (location != null)
             {
-                Debug.WriteLine(
-                    $"ACTUAL Latitude: {location.Latitude}, Longitude: {location.Longitude}, Altitude: {location.Altitude}");
-
                 this.LocationLat = location.Latitude;
                 this.LocationLon = location.Longitude;
+                Super.Log($"[SkiaCamera] GPS: fix received (accuracy {location.Accuracy:0} m)");
             }
-        }
-        catch (FeatureNotSupportedException fnsEx)
-        {
-            // Handle not supported on device exception
-        }
-        catch (FeatureNotEnabledException fneEx)
-        {
-            // Handle not enabled on device exception
-        }
-        catch (PermissionException pEx)
-        {
-            // Handle permission exception
+            else
+            {
+                Super.Log($"[SkiaCamera] GPS: no fix within {msTimeout} ms");
+            }
         }
         catch (Exception ex)
         {
-            // Unable to get location
+            Super.Log($"[SkiaCamera] GPS: fix failed: {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
@@ -4232,6 +4247,20 @@ public partial class SkiaCamera : SkiaControl
 #endif
     }
 
+    /// <summary>
+    /// Whether location is allowed right now, precise or approximate, without prompting.
+    /// </summary>
+    static async Task<bool> IsLocationPermissionAllowedNowAsync()
+    {
+#if ANDROID
+        // MAUI's CheckStatusAsync reports Denied for an approximate-only grant: read Android's own state
+        await Task.CompletedTask;
+        return HasAndroidLocationPermission(out _);
+#else
+        return IsLocationPermissionAllowed(await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>());
+#endif
+    }
+
     public static void CheckPermissions(Action granted, Action notGranted, NeedPermissions request)
     {
 #if !ONPLATFORM
@@ -4341,14 +4370,13 @@ public partial class SkiaCamera : SkiaControl
 
                 if (allGranted && request.HasFlag(NeedPermissions.Location))
                 {
-                    var locStatus = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
-                    if (!IsLocationPermissionAllowed(locStatus))
+                    if (!await IsLocationPermissionAllowedNowAsync())
                     {
-                        locStatus = await MainThread.InvokeOnMainThreadAsync(
+                        var locStatus = await MainThread.InvokeOnMainThreadAsync(
                             () => Permissions.RequestAsync<Permissions.LocationWhenInUse>());
                         wasAsking = true;
+                        allGranted = IsLocationPermissionAllowed(locStatus);
                     }
-                    allGranted = IsLocationPermissionAllowed(locStatus);
                 }
 
                 if (allGranted && wasAsking)
@@ -4500,8 +4528,7 @@ public partial class SkiaCamera : SkiaControl
 
                 if (allGranted && request.HasFlag(NeedPermissions.Location))
                 {
-                    var locStatus = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
-                    allGranted = IsLocationPermissionAllowed(locStatus);
+                    allGranted = await IsLocationPermissionAllowedNowAsync();
                 }
             }
             catch (Exception ex)

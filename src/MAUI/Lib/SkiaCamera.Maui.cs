@@ -3114,10 +3114,10 @@ public partial class SkiaCamera : SkiaControl
 
             // Check and request location permission (must be on main thread)
             var status = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
-            if (status != PermissionStatus.Granted)
+            if (!IsLocationPermissionAllowed(status))
             {
                 status = await Permissions.RequestAsync<Permissions.LocationWhenInUse>();
-                if (status != PermissionStatus.Granted)
+                if (!IsLocationPermissionAllowed(status))
                 {
                     Debug.WriteLine("[SkiaCamera] Location permission denied");
                     return;
@@ -4219,6 +4219,19 @@ public partial class SkiaCamera : SkiaControl
     /// <param name="granted">Invoked when all requested permissions are granted.</param>
     /// <param name="notGranted">Invoked when at least one requested permission is denied.</param>
     /// <param name="request">Flags indicating which permissions to check and request.</param>
+    /// <summary>
+    /// Location counts as allowed when granted at any accuracy. On Android 12+ a grant of approximate location only
+    /// reports Restricted. iOS reduced accuracy reports Granted, and iOS Restricted means location is unavailable.
+    /// </summary>
+    internal static bool IsLocationPermissionAllowed(PermissionStatus status)
+    {
+#if ANDROID
+        return status == PermissionStatus.Granted || status == PermissionStatus.Restricted;
+#else
+        return status == PermissionStatus.Granted;
+#endif
+    }
+
     public static void CheckPermissions(Action granted, Action notGranted, NeedPermissions request)
     {
 #if !ONPLATFORM
@@ -4329,13 +4342,13 @@ public partial class SkiaCamera : SkiaControl
                 if (allGranted && request.HasFlag(NeedPermissions.Location))
                 {
                     var locStatus = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
-                    if (locStatus != PermissionStatus.Granted)
+                    if (!IsLocationPermissionAllowed(locStatus))
                     {
                         locStatus = await MainThread.InvokeOnMainThreadAsync(
                             () => Permissions.RequestAsync<Permissions.LocationWhenInUse>());
                         wasAsking = true;
                     }
-                    allGranted = locStatus == PermissionStatus.Granted;
+                    allGranted = IsLocationPermissionAllowed(locStatus);
                 }
 
                 if (allGranted && wasAsking)
@@ -4488,7 +4501,7 @@ public partial class SkiaCamera : SkiaControl
                 if (allGranted && request.HasFlag(NeedPermissions.Location))
                 {
                     var locStatus = await Permissions.CheckStatusAsync<Permissions.LocationWhenInUse>();
-                    allGranted = locStatus == PermissionStatus.Granted;
+                    allGranted = IsLocationPermissionAllowed(locStatus);
                 }
             }
             catch (Exception ex)

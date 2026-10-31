@@ -2306,6 +2306,13 @@ public partial class SkiaCamera
                 return true;
         }
 
+        // a preview frame sampled from its hardware buffer lives on the canvas's GRContext (this runs during paint)
+        if (rawImage.IsTextureBacked && Superview?.GetGRContext() is { } canvasContext)
+        {
+            if (TryGetRgbaGpuCore(canvasContext, rawImage, targetWidth, targetHeight, outputBuffer, outputRotation, cropRatio))
+                return true;
+        }
+
         // Legacy path: rawImage is a CPU-raster SKImage — scale via CPU Skia surface.
         int required = targetWidth * targetHeight * 4;
         if (outputBuffer == null || outputBuffer.Length < required)

@@ -3763,6 +3763,14 @@ public partial class SkiaCamera : SkiaControl
         {
             return null;
         }
+
+        // GPU preview on Android: the frame's hardware buffer sampled by the canvas, no readback
+        if (Superview != null && NativeControl is NativeCamera androidCam)
+        {
+            var gpuImage = androidCam.GetPreviewImageGpu(Superview.GetGRContext());
+            if (gpuImage != null)
+                return gpuImage;
+        }
 #elif IOS || MACCATALYST
         // While recording on Apple, mirror the composed encoder frames into the preview
         if ((IsRecording || IsPreRecording) && UseRecordingFramesForPreview &&

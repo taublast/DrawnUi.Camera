@@ -646,10 +646,46 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
         if (formsControl.IsRecording || formsControl.IsPreRecording)
             return true;
 
+        // hardware buffers: the renderer skips a frame when the canvas holds all of them
+        var buffers = _glPreviewRenderer?.HardwareBuffers;
+        if (buffers != null && !buffers.Disabled)
+            return true;
+
         lock (_lockPreview)
         {
             return _preview == null;
         }
+    }
+
+    void OnHardwareBufferFrameReady()
+    {
+        FormsControl.OnAndroidNativePreviewFrameBuffered();
+        FormsControl.UpdatePreview();
+    }
+
+    /// <summary>
+    /// Canvas render thread: the newest preview frame as an image on the canvas's GRContext, sampled from its hardware
+    /// buffer without a copy. Null when there is no new frame, or the preview is read back instead (<see cref="GetPreviewImage"/>).
+    /// </summary>
+    internal SKImage GetPreviewImageGpu(GRContext context)
+    {
+        var buffers = _glPreviewRenderer?.HardwareBuffers;
+        if (buffers == null || buffers.Disabled || context == null)
+            return null;
+
+        IntPtr vkDevice = IntPtr.Zero;
+        if (context.Backend == GRBackend.Vulkan)
+        {
+            var view = (FormsControl.Superview?.CanvasView as Microsoft.Maui.Controls.View)?.Handler?.PlatformView as DrawnUi.Views.SkiaVulkanTextureView;
+            if (view == null || !view.CanImportHardwareBuffers || view.VkDevice == IntPtr.Zero)
+            {
+                buffers.Disable("the Vulkan canvas has no hardware buffer import");
+                return null;
+            }
+            vkDevice = view.VkDevice;
+        }
+
+        return buffers.TakeImage(context, vkDevice);
     }
 
     #endregion
@@ -1424,6 +1460,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
                                 // Wire preview delivery
                                 _glPreviewRenderer.PreviewFrameReady += OnGlPreviewFrameReady;
+                                _glPreviewRenderer.HardwareBufferFrameReady += OnHardwareBufferFrameReady;
 
                                 Debug.WriteLine($"[NativeCamera] GPU preview enabled: {PreviewWidth}x{PreviewHeight} -> {gpw}x{gph}");
                             }
@@ -1505,6 +1542,7 @@ public partial class NativeCamera : Java.Lang.Object, ImageReader.IOnImageAvaila
 
                     // Wire preview delivery
                     _glPreviewRenderer.PreviewFrameReady += OnGlPreviewFrameReady;
+                    _glPreviewRenderer.HardwareBufferFrameReady += OnHardwareBufferFrameReady;
 
                     Debug.WriteLine($"[NativeCamera] GPU preview enabled: {PreviewWidth}x{PreviewHeight} -> {gpw}x{gph}");
 

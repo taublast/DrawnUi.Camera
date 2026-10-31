@@ -85,6 +85,17 @@ namespace DrawnUi.Camera
         public event Action<SKImage, long> PreviewFrameReady;
 
         /// <summary>
+        /// Frames in hardware buffers the canvas samples without a copy; null when the device can't, and its
+        /// <see cref="AhbPreview.Disabled"/> turns true when the canvas can't: then frames are read back as before.
+        /// </summary>
+        internal AhbPreview HardwareBuffers { get; private set; }
+
+        /// <summary>
+        /// Fired on the GL thread when a frame is ready in <see cref="HardwareBuffers"/>.
+        /// </summary>
+        internal event Action HardwareBufferFrameReady;
+
+        /// <summary>
         /// Number of preview frame hits to ignore after ResetPreviewBuffers().
         /// Use this to drain stale native/SurfaceTexture queue contents before delivering preview again.
         /// </summary>
@@ -209,6 +220,10 @@ namespace DrawnUi.Camera
                     if (UseBlitPreview)
                     {
                         SetupSourceFbo(cameraWidth, cameraHeight);
+
+                        var buffers = new AhbPreview(previewWidth, previewHeight);
+                        if (buffers.InitGl())
+                            HardwareBuffers = buffers;
                     }
 
                     // Pool owns the two pinned pixel buffers — glReadPixels writes directly into them
@@ -482,13 +497,31 @@ namespace DrawnUi.Camera
             //    yields the correct Y ordering; blit without Y-flip to avoid double-inversion.
             int dstY0 = _needsYFlip ? _previewHeight : 0;
             int dstY1 = _needsYFlip ? 0 : _previewHeight;
+            // the canvas samples the frame from a hardware buffer when it can: no readback
+            var buffers = HardwareBuffers;
+            int buffer = -1;
+            if (buffers != null && !buffers.Disabled)
+            {
+                buffer = buffers.BeginWrite();
+                if (buffer < 0)
+                    return null; // the canvas still holds every buffer: skip this frame
+            }
+
             GLES30.GlBindFramebuffer(GLES30.GlReadFramebuffer, _sourceFbo);
-            GLES30.GlBindFramebuffer(GLES30.GlDrawFramebuffer, _readbackFbo);
+            GLES30.GlBindFramebuffer(GLES30.GlDrawFramebuffer, buffer >= 0 ? buffers.Framebuffer(buffer) : _readbackFbo);
             GLES30.GlBlitFramebuffer(
                 0, 0, _cameraWidth, _cameraHeight,          // src: full camera resolution
                 0, dstY0, _previewWidth, dstY1,              // dst: preview resolution, conditionally Y-flipped
                 GLES20.GlColorBufferBit,
                 GLES20.GlLinear);                             // GPU bilinear filtering
+
+            if (buffer >= 0)
+            {
+                buffers.EndWrite(buffer);
+                _hasDeliveredPreviewFrame = true;
+                HardwareBufferFrameReady?.Invoke();
+                return null;
+            }
 
             // 3. Readback directly into pool's write slot — no intermediate buffer
             GLES30.GlBindFramebuffer(GLES30.GlReadFramebuffer, _readbackFbo);
@@ -690,6 +723,8 @@ namespace DrawnUi.Camera
         {
             _gpuFrameProvider?.Dispose();
             _gpuFrameProvider = null;
+
+            HardwareBuffers?.ReleaseGl();
 
             // GL resources must be cleaned up with EGL context current
             // If we can't make current, skip GL cleanup (context may already be destroyed)

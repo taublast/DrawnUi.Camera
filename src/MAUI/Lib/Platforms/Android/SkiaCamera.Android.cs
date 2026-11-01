@@ -2202,7 +2202,16 @@ public partial class SkiaCamera
 
     private partial Task SetRecordingPausedPlatform(bool paused)
     {
-        throw new NotSupportedException("Pausing a video recording is not supported on this platform yet.");
+        if (_captureVideoEncoder is AndroidCaptureVideoEncoder encoder)
+        {
+            if (paused)
+                encoder.Pause();
+            else
+                encoder.Resume();
+            return Task.CompletedTask;
+        }
+
+        throw new NotSupportedException("Pausing is supported for realtime recording only (UseRealtimeVideoProcessing) on this platform.");
     }
 
     private partial void CreateAudioOnlyEncoder(out IAudioOnlyEncoder encoder)

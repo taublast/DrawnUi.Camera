@@ -375,11 +375,100 @@ namespace DrawnUi.Camera
             {
                 if (_isRecording)
                 {
-                    return DateTime.Now - _startTime;
+                    return DateTime.Now - _startTime - PausedSoFar;
                 }
                 return TimeSpan.Zero;
             }
         }
+
+        #region Pause
+
+        // Pause intervals on the recording's timeline: nanoseconds since CaptureStartAbsoluteNs, the clock of the video
+        // and audio timestamps. A frame or sample captured inside one is dropped; later ones are moved back by the paused
+        // time before them, so the clip plays on without a gap. Nothing here runs for a recording that never paused.
+        private readonly object _pauseLock = new();
+        private readonly List<(long Start, long End)> _pauses = new();
+        private volatile bool _everPaused;
+        private bool _recordingPaused;
+        private TimeSpan _pausedTotal;
+        private DateTime _pauseStartedWall;
+
+        private long RecordingClockNs => Super.GetCurrentTimeNanos() - CaptureStartAbsoluteNs;
+
+        public void Pause()
+        {
+            lock (_pauseLock)
+            {
+                if (_recordingPaused || IsPreRecordingMode || !_isRecording)
+                    return;
+                _recordingPaused = true;
+                _pauses.Add((RecordingClockNs, long.MaxValue));
+                _pauseStartedWall = DateTime.Now;
+                _everPaused = true;
+            }
+        }
+
+        public void Resume()
+        {
+            lock (_pauseLock)
+            {
+                if (!_recordingPaused)
+                    return;
+                var last = _pauses[^1];
+                _pauses[^1] = (last.Start, Math.Max(last.Start, RecordingClockNs));
+                _recordingPaused = false;
+                _pausedTotal += DateTime.Now - _pauseStartedWall;
+            }
+        }
+
+        /// <summary>
+        /// False when <paramref name="atNs"/> (the capture time on the recording's timeline) falls inside a pause: drop it.
+        /// An audio buffer passes its <paramref name="durationNs"/> and is dropped when any part of it does, so the buffers
+        /// on both sides of a pause never overlap once moved together. Otherwise moves <paramref name="ptsNs"/> back by the
+        /// pauses that ended before it.
+        /// </summary>
+        private bool CutPaused(long atNs, ref long ptsNs, long durationNs = 0)
+        {
+            lock (_pauseLock)
+            {
+                long shift = 0;
+                foreach (var (start, end) in _pauses)
+                {
+                    if (atNs < end && atNs + Math.Max(1, durationNs) > start)
+                        return false;
+                    if (atNs >= end)
+                        shift += end - start;
+                }
+                ptsNs -= shift;
+                return true;
+            }
+        }
+
+        private TimeSpan PausedSoFar
+        {
+            get
+            {
+                if (!_everPaused)
+                    return TimeSpan.Zero;
+                lock (_pauseLock)
+                {
+                    return _pausedTotal + (_recordingPaused ? DateTime.Now - _pauseStartedWall : TimeSpan.Zero);
+                }
+            }
+        }
+
+        private void ResetPauses()
+        {
+            lock (_pauseLock)
+            {
+                _pauses.Clear();
+                _recordingPaused = false;
+                _pausedTotal = TimeSpan.Zero;
+                _everPaused = false;
+            }
+        }
+
+        #endregion
 
         /// <summary>
         /// Request immediate keyframe from encoder (Bundle.PARAMETER_KEY_REQUEST_SYNC_FRAME)
@@ -937,6 +1026,7 @@ namespace DrawnUi.Camera
 
         public async Task StartAsync()
         {
+            ResetPauses();
             System.Diagnostics.Debug.WriteLine($"[AndroidEncoder] StartAsync CALLED: IsPreRecordingMode={IsPreRecordingMode}, BufferFrames={(_preRecordingBuffer?.GetFrameCount() ?? 0)}");
 
             // Pre-recording mode: Write buffer to muxer, then continue with live frames (mirrors iOS)
@@ -1252,7 +1342,7 @@ namespace DrawnUi.Camera
                 {
                     if (_isRecording)
                     {
-                        var elapsed = DateTime.Now - _startTime;
+                        var elapsed = DateTime.Now - _startTime - PausedSoFar;
                         ProgressReported?.Invoke(this, elapsed);
                     }
                 }, null, TimeSpan.Zero, TimeSpan.FromMilliseconds(100));
@@ -1322,7 +1412,7 @@ namespace DrawnUi.Camera
             {
                 if (_isRecording)
                 {
-                    var elapsed = DateTime.Now - _startTime;
+                    var elapsed = DateTime.Now - _startTime - PausedSoFar;
                     ProgressReported?.Invoke(this, elapsed);
                 }
             }, null, TimeSpan.Zero, TimeSpan.FromMilliseconds(100));
@@ -1450,7 +1540,7 @@ namespace DrawnUi.Camera
             {
                 if (_isRecording)
                 {
-                    var elapsed = DateTime.Now - _startTime;
+                    var elapsed = DateTime.Now - _startTime - PausedSoFar;
                     ProgressReported?.Invoke(this, elapsed);
                 }
             }, null, TimeSpan.Zero, TimeSpan.FromMilliseconds(100));
@@ -1574,6 +1664,13 @@ namespace DrawnUi.Camera
 
                 // Queue to MediaCodec input buffer
                 long ptsUs = (long)(_pendingTimestamp.TotalMilliseconds * 1_000.0);
+                if (_everPaused)
+                {
+                    long ptsNs = ptsUs * 1000;
+                    if (!CutPaused(RecordingClockNs, ref ptsNs))
+                        return; // paused: not encoded
+                    ptsUs = ptsNs / 1000;
+                }
                 int inputIndex = _videoCodec.DequeueInputBuffer(5_000);
                 if (inputIndex >= 0)
                 {
@@ -1647,6 +1744,12 @@ namespace DrawnUi.Camera
             }
 
             long ptsNanos = (long)(_pendingTimestamp.TotalMilliseconds * 1_000_000.0);
+            if (_everPaused && !CutPaused(RecordingClockNs, ref ptsNanos))
+            {
+                // paused: the frame served the preview, it is not encoded
+                try { EGL14.EglMakeCurrent(_eglDisplay, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext); } catch { }
+                return;
+            }
             EGLExt.EglPresentationTimeANDROID(_eglDisplay, _eglSurface, ptsNanos);
             EGL14.EglSwapBuffers(_eglDisplay, _eglSurface);
 
@@ -2232,6 +2335,14 @@ namespace DrawnUi.Camera
 
                 long ptsNanos = ResolveVideoPtsNanos(timestamp, timestampNs, out var frameTimestamp);
 
+                // paused: the frame is drawn for the preview but not encoded; after a pause the clip goes on without a gap
+                bool encodeFrame = true;
+                if (_everPaused)
+                {
+                    encodeFrame = CutPaused(ptsNanos, ref ptsNanos);
+                    frameTimestamp = TimeSpanFromNanoseconds(ptsNanos);
+                }
+
                 // Capture A/V sync offset from the very first frame PTS, immediately —
                 // don't wait for it to round-trip through the encoder pipeline.
                 if (UseSharedMediaOriginForLiveSync)
@@ -2397,6 +2508,12 @@ namespace DrawnUi.Camera
                 {
                     _gpuFrameCounter = 0;
                     _grContext.PurgeUnlockedResources(false);  // false = don't scratchResourcesOnly
+                }
+
+                if (!encodeFrame)
+                {
+                    OnGpuFrameProcessed?.Invoke();
+                    return;
                 }
 
                 // 5. Set presentation timestamp and swap to encoder
@@ -3161,6 +3278,7 @@ namespace DrawnUi.Camera
             {
                 EncodingDuration = DateTime.Now - _startTime;
             }
+            EncodingDuration -= PausedSoFar;
 
             ResetAudioTiming();
 
@@ -4317,7 +4435,17 @@ namespace DrawnUi.Camera
 
             try
             {
-                long ptsUs = CalculateAudioPts(sample.TimestampNs);
+                long timestampNs = sample.TimestampNs;
+                if (_everPaused)
+                {
+                    long relativeNs = timestampNs - CaptureStartAbsoluteNs;
+                    long durationNs = sample.SampleCount * 1_000_000_000L / Math.Max(1, sample.SampleRate);
+                    if (!CutPaused(relativeNs, ref relativeNs, durationNs))
+                        return; // captured while paused
+                    timestampNs = relativeNs + CaptureStartAbsoluteNs;
+                }
+
+                long ptsUs = CalculateAudioPts(timestampNs);
                 if (ptsUs < 0)
                 {
                     return;

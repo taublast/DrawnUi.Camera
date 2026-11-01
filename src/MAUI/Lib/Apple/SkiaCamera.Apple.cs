@@ -870,6 +870,7 @@ public partial class SkiaCamera
         // Pass locked rotation to encoder for proper video orientation metadata (iOS-specific)
         // Initialize the NEW encoder
         await appleEncoder.InitializeAsync(outputPath, width, height, fps, EnableAudioRecording, RecordingLockedRotation);
+        SetRealtimeRecordingFormat((int)width, (int)height, (int)fps, RecordingLockedRotation);
 
         // ✅ CRITICAL: If transitioning from pre-recording to live, set the duration offset BEFORE StartAsync
         // BUT ONLY if pre-recording file actually exists and has content (otherwise standalone live recording will be corrupted!)

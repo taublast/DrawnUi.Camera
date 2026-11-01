@@ -1198,6 +1198,7 @@ public partial class SkiaCamera : SkiaControl
         }
 
         await _captureVideoEncoder.InitializeAsync(outputPath, width, height, fps, EnableAudioRecording && _audioCapture != null);
+        SetRealtimeRecordingFormat(width, height, fps);
         if (_captureVideoEncoder is WindowsCaptureVideoEncoder { IsGpu: true } gpuEncoder && report.VideoEncoder != gpuEncoder.VideoTransforms)
         {
             report.VideoEncoder = gpuEncoder.VideoTransforms;

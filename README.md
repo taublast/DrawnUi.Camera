@@ -28,23 +28,22 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.8.131
+## What's New  1.10.8.151
 
- * Android: the preview reaches the screen straight from the GPU, without copying each frame through memory, on both the Vulkan and the OpenGL canvas: smooth in photo and video mode, at a fraction of the CPU time. Devices that can't share GPU buffers keep the previous preview path.
- * Android: an approximate location grant counts as allowed. Photos and clips get the location the system gives at that accuracy, and the user is not asked again for precise location.
- * Built on DrawnUi 1.10.8.13. The version follows DrawnUi's.
+ * Recordings with live processing (`UseRealtimeVideoProcessing`) report the clip's size and frame rate in `CapturedVideo.Format`, as the file plays, on iOS, Android and Windows.
+ * Built on DrawnUi 1.10.8.15. The version follows DrawnUi's.
 
 ## Previously 
 
+ * Android: the preview reaches the screen straight from the GPU, without copying each frame through memory, on both the Vulkan and the OpenGL canvas: smooth in photo and video mode, at a fraction of the CPU time. Devices that can't share GPU buffers keep the previous preview path.
+ * Android: an approximate location grant counts as allowed. Photos and clips get the location the system gives at that accuracy, and the user is not asked again for precise location.
  * Android: the library requires Android 7.0 (API 24) or newer, the minimum Google Play's automatic app protection accepts.
 
  * Android: photos and the fallback preview are converted from the camera's YUV frames by a GPU shader. The package no longer uses RenderScript, and it is built on DrawnUi 1.10.8.3, which no longer brings `AppoMobi.Maui.Native.Android`.
- * Android: smooth preview on Mali GPUs: each frame is read straight into its image buffer, at a fraction of the CPU time per frame.
  * Android: the preview and the recording encoder each run all their GPU work on one thread, so video records on every DrawnUi canvas backend, Vulkan included, and the preview works on the Android emulator.
  * Android: the selfie camera follows the Apple mirror rule: preview frames arrive mirrored, and `MirrorSavedSelfiePhoto` decides whether photos and clips keep the mirror, so preview, photo and clip agree on both platforms, also while recording.
  * Android: a camera that cannot start reports `HardwareState.Error`, and the preview size prefers the larger size when two sizes match the aspect equally.
- * Apple: `GetAvailableAudioDevicesAsync` lists the inputs `AudioDeviceIndex` picks from, and -1 keeps the system's own input.
- * Preview audio keeps running after an audio-only recording.
+ * Apple: `GetAvailableAudioDevicesAsync` lists the inputs `AudioDeviceIndex` picks from, and -1 keeps the system's own input. Preview audio keeps running after an audio-only recording.
  * Pause and resume a video recording: `PauseVideoRecording()` and `ResumeVideoRecording()`, with `IsRecordingPaused` and `IsRecordingPausedChanged`. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync, and the recording duration leaves it out. Stopping while paused saves the clip. Windows, and iOS with `UseRealtimeVideoProcessing`; Android throws `NotSupportedException` for now.
  * iOS: video frames that arrive before the camera is on are released at once instead of staying in memory until the next garbage collection.
  * `TakePicture` with the camera off, or during another capture, raises `CaptureFailed` instead of waiting forever, and a failed recording stop raises `RecordingFailed` once.

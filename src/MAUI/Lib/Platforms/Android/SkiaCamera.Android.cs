@@ -1300,6 +1300,7 @@ public partial class SkiaCamera
         if (_captureVideoEncoder is DrawnUi.Camera.AndroidCaptureVideoEncoder androidEncoder)
         {
             await androidEncoder.InitializeAsync(outputPath, width, height, fps, audioEnabled, RecordingLockedRotation);
+            SetRealtimeRecordingFormat(width, height, fps, RecordingLockedRotation);
 
             // Apply codec selection if set
             if (AudioCodecIndex >= 0)
@@ -1336,6 +1337,7 @@ public partial class SkiaCamera
         else
         {
             await _captureVideoEncoder.InitializeAsync(outputPath, width, height, fps, audioEnabled);
+            SetRealtimeRecordingFormat(width, height, fps);
         }
 
         if (audioEnabled)
@@ -1745,6 +1747,7 @@ public partial class SkiaCamera
 
         var audioEnabled = EnableAudioRecording;
         await newEncoder.InitializeAsync(_liveRecordingFilePath, _diagEncWidth, _diagEncHeight, _targetFps, audioEnabled, RecordingLockedRotation);
+        SetRealtimeRecordingFormat(_diagEncWidth, _diagEncHeight, _targetFps, RecordingLockedRotation);
 
         // Audio: live encoder accepts samples directly (no circular pre-rec buffer)
         _audioBuffer = null;

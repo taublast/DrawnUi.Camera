@@ -4576,11 +4576,32 @@ public partial class SkiaCamera : SkiaControl
 
     #endregion
 
+    private VideoFormat _realtimeRecordingFormat;
+
+    /// <summary>
+    /// Remembers the size and frame rate of the file a live-processing recording writes, as the file plays:
+    /// a rotation stored as playback metadata (90 or 270) swaps width and height.
+    /// </summary>
+    internal void SetRealtimeRecordingFormat(int width, int height, int frameRate, int rotation = 0)
+    {
+        bool sideways = ((rotation % 360) + 360) % 180 == 90;
+        _realtimeRecordingFormat = new VideoFormat
+        {
+            Width = sideways ? height : width,
+            Height = sideways ? width : height,
+            FrameRate = frameRate
+        };
+    }
+
     /// <summary>
     /// Internal method to raise RecordingSuccess event
     /// </summary>
     internal void OnRecordingSuccess(CapturedVideo capturedVideo)
     {
+        // live-processing recordings: the size and frame rate of the file written, whichever path built the result
+        capturedVideo.Format ??= _realtimeRecordingFormat;
+        _realtimeRecordingFormat = null;
+
         CurrentRecordingDuration = TimeSpan.Zero;
         RecordingSuccess?.Invoke(this, capturedVideo);
     }

@@ -1826,8 +1826,21 @@ public partial class SkiaCamera : SkiaControl
 
     #endregion
 
-    private void Super_OnNativeAppPaused(object sender, EventArgs e)
+    private async void Super_OnNativeAppPaused(object sender, EventArgs e)
     {
+        // the camera stops in the background: a video recording ends here and is saved, as in the system camera apps
+        if (IsRecording && !IsRecordingAudioOnly)
+        {
+            try
+            {
+                await StopVideoRecording();
+            }
+            catch (Exception ex)
+            {
+                Super.Log(ex);
+            }
+        }
+
         StopAll();
     }
 

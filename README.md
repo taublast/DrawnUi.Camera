@@ -28,9 +28,10 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.8.152
+## What's New  1.10.8.153
 
  * Android: pause and resume a recording with live processing (`UseRealtimeVideoProcessing`), as on iOS and Windows. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync.
+ * A video recording that is running when the app goes to the background ends there and is saved, as in the system camera apps, on Android and iOS.
  * Built on DrawnUi 1.10.8.15. The version follows DrawnUi's.
 
 ## Previously 

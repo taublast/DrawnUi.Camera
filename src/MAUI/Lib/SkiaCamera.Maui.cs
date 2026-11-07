@@ -1828,6 +1828,47 @@ public partial class SkiaCamera : SkiaControl
 
     private async void Super_OnNativeAppPaused(object sender, EventArgs e)
     {
+#if IOS || MACCATALYST
+        // iOS reports the app inactive also under Control Center, where the system camera keeps recording: a video
+        // recording and its camera go on, and only the app really going to the background ends them (OnAppEnteredBackground)
+        if (IsRecording && !IsRecordingAudioOnly)
+        {
+            _keptRunningWhileInactive = true;
+            return;
+        }
+#endif
+        await StopInBackground();
+    }
+
+#if IOS || MACCATALYST
+    private bool _keptRunningWhileInactive;
+    private Foundation.NSObject _enteredBackgroundObserver;
+
+    private void ObserveAppEnteredBackground(bool observe)
+    {
+        if (_enteredBackgroundObserver != null)
+        {
+            Foundation.NSNotificationCenter.DefaultCenter.RemoveObserver(_enteredBackgroundObserver);
+            _enteredBackgroundObserver = null;
+        }
+
+        if (observe)
+            _enteredBackgroundObserver = Foundation.NSNotificationCenter.DefaultCenter.AddObserver(
+                UIKit.UIApplication.DidEnterBackgroundNotification, _ => OnAppEnteredBackground());
+    }
+
+    private async void OnAppEnteredBackground()
+    {
+        if (!_keptRunningWhileInactive)
+            return; // the camera already stopped when the app became inactive
+
+        _keptRunningWhileInactive = false;
+        await StopInBackground();
+    }
+#endif
+
+    private async Task StopInBackground()
+    {
         // the camera stops in the background: a video recording ends here and is saved, as in the system camera apps
         if (IsRecording && !IsRecordingAudioOnly)
         {
@@ -1846,6 +1887,13 @@ public partial class SkiaCamera : SkiaControl
 
     private void Super_OnNativeAppResumed(object sender, EventArgs e)
     {
+#if IOS || MACCATALYST
+        if (_keptRunningWhileInactive)
+        {
+            _keptRunningWhileInactive = false; // Control Center closed: the camera never stopped
+            return;
+        }
+#endif
         ResumeIfNeeded();
     }
 
@@ -1959,6 +2007,9 @@ public partial class SkiaCamera : SkiaControl
             Super.OnNativeAppPaused -= Super_OnNativeAppPaused;
             Super.OnNativeAppResumed += Super_OnNativeAppResumed;
             Super.OnNativeAppPaused += Super_OnNativeAppPaused;
+#if IOS || MACCATALYST
+            ObserveAppEnteredBackground(true);
+#endif
 
             ClearInternalCache();
 
@@ -2198,6 +2249,9 @@ public partial class SkiaCamera : SkiaControl
 
         Super.OnNativeAppResumed -= Super_OnNativeAppResumed;
         Super.OnNativeAppPaused -= Super_OnNativeAppPaused;
+#if IOS || MACCATALYST
+        ObserveAppEnteredBackground(false);
+#endif
 
         if (Display != null)
         {

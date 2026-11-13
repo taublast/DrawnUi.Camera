@@ -28,11 +28,10 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.8.153
+## What's New  1.10.8.261
 
- * Android: pause and resume a recording with live processing (`UseRealtimeVideoProcessing`), as on iOS and Windows. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync.
- * A video recording that is running when the app goes to the background ends there and is saved, as in the system camera apps, on Android and iOS.
- * Built on DrawnUi 1.10.8.15. The version follows DrawnUi's.
+ * iOS: a recording keeps going when you open Control Center.
+ * Built on DrawnUi 1.10.8.26. The version follows DrawnUi's.
 
 ## Previously 
 
@@ -46,7 +45,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * Android: the selfie camera follows the Apple mirror rule: preview frames arrive mirrored, and `MirrorSavedSelfiePhoto` decides whether photos and clips keep the mirror, so preview, photo and clip agree on both platforms, also while recording.
  * Android: a camera that cannot start reports `HardwareState.Error`, and the preview size prefers the larger size when two sizes match the aspect equally.
  * Apple: `GetAvailableAudioDevicesAsync` lists the inputs `AudioDeviceIndex` picks from, and -1 keeps the system's own input. Preview audio keeps running after an audio-only recording.
- * Pause and resume a video recording: `PauseVideoRecording()` and `ResumeVideoRecording()`, with `IsRecordingPaused` and `IsRecordingPausedChanged`. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync, and the recording duration leaves it out. Stopping while paused saves the clip. Windows, and iOS and Android with `UseRealtimeVideoProcessing`.
+ * Pause and resume a video recording: `PauseVideoRecording()` and `ResumeVideoRecording()`, with `IsRecordingPaused` and `IsRecordingPausedChanged`. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync, and the recording duration leaves it out. Stopping while paused saves the clip. Windows, and iOS and Android with `UseRealtimeVideoProcessing`. On Android this works with live processing (`UseRealtimeVideoProcessing`) too, and a recording that is running when the app goes to the background ends there and is saved, as in the system camera apps, on Android and iOS.
  * iOS: video frames that arrive before the camera is on are released at once instead of staying in memory until the next garbage collection.
  * `TakePicture` with the camera off, or during another capture, raises `CaptureFailed` instead of waiting forever, and a failed recording stop raises `RecordingFailed` once.
 

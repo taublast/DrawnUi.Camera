@@ -28,13 +28,15 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.8.261
+## What's New  1.10.8.262
 
- * iOS: a recording keeps going when you open Control Center.
+ * iOS: `RenderFrameForRecording` gets the camera frame upright on a plain canvas, as on Android and in the preview, so a recording shader places its effects where the preview shows them.
+ * iOS: the preview keeps running when a photo is taken right as the camera switches between photo and video.
  * Built on DrawnUi 1.10.8.26. The version follows DrawnUi's.
 
 ## Previously 
 
+ * iOS: a recording keeps going when you open Control Center.
  * Recordings with live processing (`UseRealtimeVideoProcessing`) report the clip's size and frame rate in `CapturedVideo.Format`, as the file plays, on iOS, Android and Windows.
  * Android: the preview reaches the screen straight from the GPU, without copying each frame through memory, on both the Vulkan and the OpenGL canvas: smooth in photo and video mode, at a fraction of the CPU time. Devices that can't share GPU buffers keep the previous preview path.
  * Android: an approximate location grant counts as allowed. Photos and clips get the location the system gives at that accuracy, and the user is not asked again for precise location.
@@ -47,7 +49,6 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * Apple: `GetAvailableAudioDevicesAsync` lists the inputs `AudioDeviceIndex` picks from, and -1 keeps the system's own input. Preview audio keeps running after an audio-only recording.
  * Pause and resume a video recording: `PauseVideoRecording()` and `ResumeVideoRecording()`, with `IsRecordingPaused` and `IsRecordingPausedChanged`. The paused time is cut from the clip, which plays on without a gap, with audio and video in sync, and the recording duration leaves it out. Stopping while paused saves the clip. Windows, and iOS and Android with `UseRealtimeVideoProcessing`. On Android this works with live processing (`UseRealtimeVideoProcessing`) too, and a recording that is running when the app goes to the background ends there and is saved, as in the system camera apps, on Android and iOS.
  * iOS: video frames that arrive before the camera is on are released at once instead of staying in memory until the next garbage collection.
- * `TakePicture` with the camera off, or during another capture, raises `CaptureFailed` instead of waiting forever, and a failed recording stop raises `RecordingFailed` once.
 
 ## Extending SkiaCamera
 

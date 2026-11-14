@@ -30,12 +30,12 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ## What's New  1.10.8.262
 
- * iOS: `RenderFrameForRecording` gets the camera frame upright on a plain canvas, as on Android and in the preview, so a recording shader places its effects where the preview shows them.
- * iOS: the preview keeps running when a photo is taken right as the camera switches between photo and video.
- * iOS: recorded audio goes to the encoder with correct sample sizes.
- * A paused recording reports its real length in `CapturedVideo.Duration`, without the paused time.
- * iOS: the camera restarts by itself when the system resets its media services, and the preview goes on.
  * iOS: the camera and a recording start without holding up the UI: the session, the audio engine and the video writer start on worker threads.
+ * iOS: the camera restarts by itself when the system resets its media services, and the preview goes on.
+ * iOS: the preview keeps running when a photo is taken right as the camera switches between photo and video.
+ * iOS: `RenderFrameForRecording` gets the camera frame upright on a plain canvas, as on Android and in the preview, so a recording shader places its effects where the preview shows them.
+ * A paused recording reports its real length in `CapturedVideo.Duration`, without the paused time.
+ * iOS: recorded audio goes to the encoder with correct sample sizes.
  * Built on DrawnUi 1.10.8.26. The version follows DrawnUi's.
 
 ## Previously 

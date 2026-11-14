@@ -32,6 +32,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
  * iOS: `RenderFrameForRecording` gets the camera frame upright on a plain canvas, as on Android and in the preview, so a recording shader places its effects where the preview shows them.
  * iOS: the preview keeps running when a photo is taken right as the camera switches between photo and video.
+ * iOS: recorded audio goes to the encoder with correct sample sizes.
  * Built on DrawnUi 1.10.8.26. The version follows DrawnUi's.
 
 ## Previously 

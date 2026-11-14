@@ -599,7 +599,9 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                     if (State != CameraProcessorState.Enabled || _session.Running)
                         return;
 
-                    // the same session, outputs and callbacks first, as Apple's AVCam does
+                    // the same session, outputs and callbacks first, as Apple's AVCam does; the preview texture is
+                    // wrapped again from the first new frame, as on every start (SetupHardware)
+                    ResetPreviewTexture();
                     _session.StartRunning();
                 }
 

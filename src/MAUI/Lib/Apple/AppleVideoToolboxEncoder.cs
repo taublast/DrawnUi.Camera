@@ -1024,6 +1024,11 @@ namespace DrawnUi.Camera
 
 
         /// <summary>
+        /// The frame drawn so far, between BeginFrame and the end of its scope (a GPU copy on a Metal surface).
+        /// </summary>
+        internal SKImage SnapshotFrame() => _surface?.Snapshot();
+
+        /// <summary>
         /// Begin a frame for Skia composition. Returns canvas to draw on.
         /// </summary>
         public IDisposable BeginFrame(TimeSpan timestamp, out SKCanvas canvas, out SKImageInfo info, int orientation)

@@ -402,6 +402,36 @@ public partial class SkiaCamera
         _ = CaptureFrameCore();
     }
 
+    private bool? _rendersFrameForRecording;
+
+    /// <summary>True when a subclass draws the recording frame itself (RenderFrameForRecording overridden).</summary>
+    private bool RendersFrameForRecording
+    {
+        get
+        {
+            if (_rendersFrameForRecording == null)
+            {
+                Action<SKCanvas, SKImage, SKRect, SKRect> render = RenderFrameForRecording;
+                _rendersFrameForRecording = render.Method.DeclaringType != typeof(SkiaCamera);
+            }
+            return _rendersFrameForRecording.Value;
+        }
+    }
+
+    /// <summary>
+    /// The camera frame was drawn rotated or mirrored into the encoder frame: hands that upright frame to
+    /// RenderFrameForRecording, drawn 1:1 over the whole frame.
+    /// </summary>
+    private void RenderUprightFrameForRecording(DrawnUi.Camera.AppleVideoToolboxEncoder encoder, SKCanvas canvas, SKImageInfo info)
+    {
+        using var upright = encoder.SnapshotFrame();
+        if (upright == null)
+            return;
+
+        var full = new SKRect(0, 0, info.Width, info.Height);
+        RenderFrameForRecording(canvas, upright, full, full);
+    }
+
     private async Task CaptureFrameCore()
     {
         try
@@ -496,6 +526,10 @@ public partial class SkiaCamera
 
                 try
                 {
+                    // an app's RenderFrameForRecording gets the frame upright, on a canvas without transforms, as on
+                    // Android and as in the preview: a shader that reads its pixel position sees the output's layout
+                    bool rendersFrameForRecording = RendersFrameForRecording;
+
                     using (appleEnc.BeginFrame(elapsed, out var canvas, out var info, DeviceRotation)) 
                     {
                         // If we have raw image, we need to handle rotation here
@@ -557,10 +591,15 @@ public partial class SkiaCamera
 
                             var __rectsA = GetAspectFillRects(imageToDraw.Width, imageToDraw.Height, virtualW,
                                 virtualH);
-                            //canvas.DrawImage(imageToDraw, __rectsA.src, __rectsA.dst);
-                            RenderFrameForRecording(canvas, imageToDraw, __rectsA.src, __rectsA.dst);
+                            if (rendersFrameForRecording)
+                                canvas.DrawImage(imageToDraw, __rectsA.src, __rectsA.dst);
+                            else
+                                RenderFrameForRecording(canvas, imageToDraw, __rectsA.src, __rectsA.dst);
 
                             canvas.Restore();
+
+                            if (rendersFrameForRecording)
+                                RenderUprightFrameForRecording(appleEnc, canvas, info);
                         }
                         else
                         {
@@ -572,11 +611,15 @@ public partial class SkiaCamera
                                 canvas.Translate(info.Width, 0);
                                 canvas.Scale(-1, 1);
                             }
-                            //canvas.DrawImage(imageToDraw, __rectsA.src, __rectsA.dst);
-                            RenderFrameForRecording(canvas, imageToDraw, __rectsA.src, __rectsA.dst);
+                            if (unmirrorFallback && rendersFrameForRecording)
+                                canvas.DrawImage(imageToDraw, __rectsA.src, __rectsA.dst);
+                            else
+                                RenderFrameForRecording(canvas, imageToDraw, __rectsA.src, __rectsA.dst);
                             if (unmirrorFallback)
                             {
                                 canvas.Restore();
+                                if (rendersFrameForRecording)
+                                    RenderUprightFrameForRecording(appleEnc, canvas, info);
                             }
                         }
 

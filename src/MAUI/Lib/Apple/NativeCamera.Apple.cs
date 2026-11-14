@@ -148,6 +148,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     private CameraProcessorState _state = CameraProcessorState.None;
     private bool _flashSupported;
     private bool _isCapturingStill;
+    private PhotoCaptureDelegate _pendingPhoto;
     private bool _isRecordingVideo;
     private AVCaptureMovieFileOutput _movieFileOutput;
     private NSUrl _currentVideoUrl;
@@ -751,6 +752,10 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 {
                     _session.RemoveInput(_session.Inputs[0]);
                 }
+
+                // a shot asked from the photo output removed below never answers: it fails now, or the
+                // capture flag stays set and every later frame is dropped (frozen, then black preview)
+                _pendingPhoto?.Cancel("The camera was reconfigured while the photo was being taken");
 
                 // Remove all existing outputs before adding new ones
                 while (_session.Outputs.Any())
@@ -1688,6 +1693,9 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 _result.TrySetResult(data);
         }
 
+        /// <summary>The output this shot was asked from is gone: no answer will come.</summary>
+        public void Cancel(string reason) => _result.TrySetException(new InvalidOperationException(reason));
+
         public override void DidFinishCapture(AVCapturePhotoOutput captureOutput, AVCaptureResolvedPhotoSettings resolvedSettings, NSError error)
         {
             if (error != null)
@@ -2048,6 +2056,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
                 // the output keeps the delegate weakly: held here until the shot is back
                 var captureDelegate = new PhotoCaptureDelegate();
+                _pendingPhoto = captureDelegate;
                 _photoOutput.CapturePhoto(CreatePhotoSettings(), captureDelegate);
                 using var jpegData = await captureDelegate.Task;
                 GC.KeepAlive(captureDelegate);
@@ -2118,6 +2127,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             }
             finally
             {
+                _pendingPhoto = null;
                 _isCapturingStill = false;
             }
         });

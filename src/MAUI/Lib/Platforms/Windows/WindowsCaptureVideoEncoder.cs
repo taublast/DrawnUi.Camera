@@ -1618,7 +1618,7 @@ public class WindowsCaptureVideoEncoder : ICaptureVideoEncoder
         EncodingStatus = "Completed";
         if (!_encodingDurationSetFromFrames)
         {
-            EncodingDuration = DateTime.Now - _startTime;
+            EncodingDuration = DateTime.Now - _startTime - PausedSoFar; // the paused time is not in the clip
         }
 
         try

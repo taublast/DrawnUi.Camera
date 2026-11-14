@@ -1489,7 +1489,7 @@ namespace DrawnUi.Camera
                     {
                         EncodedDataSize += (long)pixelBuffer.DataSize;
                     }
-                    EncodingDuration = DateTime.Now - _startTime;
+                    EncodingDuration = DateTime.Now - _startTime - PausedSoFar;
                     EncodingStatus = "Encoding";
                 }
             }
@@ -1755,7 +1755,7 @@ namespace DrawnUi.Camera
             // CRITICAL: If EncodingDuration was set from frame timestamps, do NOT overwrite with wall-clock time!
             if (!_encodingDurationSetFromFrames)
             {
-                EncodingDuration = DateTime.Now - _startTime;
+                EncodingDuration = DateTime.Now - _startTime - PausedSoFar; // the paused time is not in the clip
                 System.Diagnostics.Debug.WriteLine($"[AppleVideoToolboxEncoder #{_instanceId}] EncodingDuration set from wall-clock time: {EncodingDuration.TotalSeconds:F3}s");
             }
             else

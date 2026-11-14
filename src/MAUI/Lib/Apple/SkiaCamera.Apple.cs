@@ -730,7 +730,30 @@ public partial class SkiaCamera
         }
     }
 
-    private async Task<ICaptureVideoEncoder> StartRealtimeVideoProcessing(bool preserveCurrentEncoder = false)
+    /// <summary>The recording start in progress: a stop or abort that comes meanwhile waits for it.</summary>
+    private Task _realtimeStart = Task.CompletedTask;
+
+    private Task<ICaptureVideoEncoder> StartRealtimeVideoProcessing(bool preserveCurrentEncoder = false)
+    {
+        var start = StartRealtimeVideoProcessingCore(preserveCurrentEncoder);
+        _realtimeStart = start;
+        return start;
+    }
+
+    /// <summary>A recording start runs partly on workers now: let it finish before tearing it down.</summary>
+    private async Task WaitForRealtimeStart()
+    {
+        try
+        {
+            await _realtimeStart;
+        }
+        catch
+        {
+            // the start reported its own failure
+        }
+    }
+
+    private async Task<ICaptureVideoEncoder> StartRealtimeVideoProcessingCore(bool preserveCurrentEncoder)
     {
         lock (_audioPauseLock)
             _audioPauses.Clear(); // a new recording starts unpaused
@@ -798,7 +821,10 @@ public partial class SkiaCamera
                 else if (IsRecording && _liveAudioWriter == null)
                 {
                     // Live-only (no pre-recording): Start streaming writer immediately
-                    if (StartLiveAudioWriter(AudioSampleRate, AudioChannels))
+                    // the writer, the audio engine and the encoder below wait on system services: never on the UI
+                    // thread, where a record tap starts them (inside a canvas draw, ~0.4 s of frozen UI per start)
+                    int sampleRate = AudioSampleRate, channels = AudioChannels;
+                    if (await Task.Run(() => StartLiveAudioWriter(sampleRate, channels)))
                     {
                         Debug.WriteLine("[StartRealtimeVideoProcessing] Started STREAMING audio writer for live recording (OOM-safe)");
                     }
@@ -814,7 +840,10 @@ public partial class SkiaCamera
                 // Start audio capture if not already running (survives transition)
                 if (_audioCapture != null && !_audioCapture.IsCapturing)
                 {
-                    await _audioCapture.StartAsync(AudioSampleRate, AudioChannels, AudioBitDepth, AudioDeviceIndex);
+                    var audioCapture = _audioCapture;
+                    int sampleRate = AudioSampleRate, channels = AudioChannels, deviceIndex = AudioDeviceIndex;
+                    var bitDepth = AudioBitDepth;
+                    await Task.Run(() => audioCapture.StartAsync(sampleRate, channels, bitDepth, deviceIndex));
                     Debug.WriteLine("[StartRealtimeVideoProcessing] Audio capture started");
                 }
                 else if (_audioCapture?.IsCapturing == true)
@@ -841,10 +870,6 @@ public partial class SkiaCamera
 
         Debug.WriteLine($"[StartRealtimeVideoProcessing] iOS encoder initialized with IsPreRecordingMode={IsPreRecording}");
 
-        // Use encoder's processed frames for preview — ProcessFrame overlay is already baked in,
-        // so ProcessPreview can be skipped, eliminating duplicate GPU overlay work.
-        UseRecordingFramesForPreview = true;
-        
         if (MirrorRecordingToPreview)
         {
             _encoderPreviewInvalidateHandler = (s, e) =>
@@ -912,7 +937,9 @@ public partial class SkiaCamera
 
         // Pass locked rotation to encoder for proper video orientation metadata (iOS-specific)
         // Initialize the NEW encoder
-        await appleEncoder.InitializeAsync(outputPath, width, height, fps, EnableAudioRecording, RecordingLockedRotation);
+        bool withAudio = EnableAudioRecording;
+        var lockedRotation = RecordingLockedRotation;
+        await Task.Run(() => appleEncoder.InitializeAsync(outputPath, width, height, fps, withAudio, lockedRotation));
         SetRealtimeRecordingFormat((int)width, (int)height, (int)fps, RecordingLockedRotation);
 
         // ✅ CRITICAL: If transitioning from pre-recording to live, set the duration offset BEFORE StartAsync
@@ -952,7 +979,7 @@ public partial class SkiaCamera
         // StartAsync will be called later when transitioning to live recording
         if (!IsPreRecording)
         {
-            await appleEncoder.StartAsync();
+            await Task.Run(() => appleEncoder.StartAsync());
             Debug.WriteLine($"[StartRealtimeVideoProcessing] StartAsync called for live/normal recording");
         }
         else
@@ -983,6 +1010,11 @@ public partial class SkiaCamera
 
         // 2. SWAP to new encoder - atomic assignment
         _captureVideoEncoder = appleEncoder;
+
+        // Use encoder's processed frames for preview — ProcessFrame overlay is already baked in,
+        // so ProcessPreview can be skipped, eliminating duplicate GPU overlay work. Only now that the encoder is
+        // in place: the live preview runs on while the encoder starts on a worker.
+        UseRecordingFramesForPreview = true;
 
         _capturePtsBaseTime = null;
 
@@ -2420,6 +2452,8 @@ public partial class SkiaCamera
 
     private async Task StopRealtimeVideoProcessingInternal()
     {
+        await WaitForRealtimeStart();
+
         ICaptureVideoEncoder encoder = null;
         string tempAudioFilePath = null;
 
@@ -2719,6 +2753,8 @@ public partial class SkiaCamera
 
     private async Task AbortRealtimeVideoProcessingInternal()
     {
+        await WaitForRealtimeStart();
+
         ICaptureVideoEncoder encoder = null;
 
         try

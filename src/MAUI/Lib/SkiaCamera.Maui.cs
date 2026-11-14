@@ -1630,6 +1630,10 @@ public partial class SkiaCamera : SkiaControl
 #if ONPLATFORM
             try
             {
+#if IOS || MACCATALYST
+                // a stop tapped while the recording is still starting (on workers) waits for its encoder
+                await WaitForRealtimeStart();
+#endif
                 // Check if using capture video flow
                 if (_captureVideoEncoder != null)
                 {

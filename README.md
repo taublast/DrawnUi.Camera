@@ -35,7 +35,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * iOS: recorded audio goes to the encoder with correct sample sizes.
  * A paused recording reports its real length in `CapturedVideo.Duration`, without the paused time.
  * iOS: the camera restarts by itself when the system resets its media services, and the preview goes on.
- * iOS: the camera starts without holding up the UI: its session starts on a worker thread.
+ * iOS: the camera and a recording start without holding up the UI: the session, the audio engine and the video writer start on worker threads.
  * Built on DrawnUi 1.10.8.26. The version follows DrawnUi's.
 
 ## Previously 

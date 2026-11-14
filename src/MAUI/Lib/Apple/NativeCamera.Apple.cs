@@ -98,6 +98,12 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
             _kill?.Dispose();
 
+            if (_runtimeErrorObserver != null)
+            {
+                NSNotificationCenter.DefaultCenter.RemoveObserver(_runtimeErrorObserver);
+                _runtimeErrorObserver = null;
+            }
+
             // Clean up Metal scaler
             _metalScaler?.Dispose();
             _metalScaler = null;
@@ -556,6 +562,61 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
         _session = new AVCaptureSession();
         _videoDataOutput = new AVCaptureVideoDataOutput();
         _videoDataOutputQueue = new DispatchQueue("VideoDataOutput", false);
+        _runtimeErrorObserver = NSNotificationCenter.DefaultCenter.AddObserver(
+            AVCaptureSession.RuntimeErrorNotification, OnSessionRuntimeError, _session);
+    }
+
+    private NSObject _runtimeErrorObserver;
+    private DateTime _lastRuntimeRestart;
+
+    /// <summary>
+    /// The capture session stopped on a runtime error, e.g. media services were reset when the system camera daemon
+    /// restarted: the session restarts by itself, as Apple advises, instead of leaving the preview frozen.
+    /// </summary>
+    private void OnSessionRuntimeError(NSNotification notification)
+    {
+        var error = notification.UserInfo?[AVCaptureSession.ErrorKey] as NSError;
+        Console.WriteLine($"[NativeCameraiOS] Session runtime error {error?.Code}: {error?.LocalizedDescription}");
+
+        if (State != CameraProcessorState.Enabled)
+            return; // the camera is not meant to run
+
+        // once per error burst: a session that keeps failing is not restarted in a loop
+        var now = DateTime.UtcNow;
+        if (now - _lastRuntimeRestart < TimeSpan.FromSeconds(10))
+        {
+            Console.WriteLine("[NativeCameraiOS] Not restarting again so soon after the last restart");
+            return;
+        }
+        _lastRuntimeRestart = now;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                lock (lockSetup)
+                {
+                    if (State != CameraProcessorState.Enabled || _session.Running)
+                        return;
+
+                    // the same session, outputs and callbacks first, as Apple's AVCam does
+                    _session.StartRunning();
+                }
+
+                if (!_session.Running)
+                {
+                    // the inputs died with the daemon: build the session again
+                    Stop(true);
+                    Start();
+                }
+
+                Console.WriteLine($"[NativeCameraiOS] Session restarted after the runtime error, running={_session.Running}");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[NativeCameraiOS] Session restart after the runtime error failed: {e}");
+            }
+        });
     }
 
 

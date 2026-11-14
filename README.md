@@ -34,6 +34,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
  * iOS: the preview keeps running when a photo is taken right as the camera switches between photo and video.
  * iOS: recorded audio goes to the encoder with correct sample sizes.
  * A paused recording reports its real length in `CapturedVideo.Duration`, without the paused time.
+ * iOS: the camera restarts by itself when the system resets its media services, and the preview goes on.
  * Built on DrawnUi 1.10.8.26. The version follows DrawnUi's.
 
 ## Previously 

@@ -1497,18 +1497,50 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
     #region INativeCamera Implementation
 
+    /// <summary>Moves on with every Stop: a start that was asked before it does not run after it.</summary>
+    private int _lifecycleGeneration;
+
     public void Start()
     {
         if (State == CameraProcessorState.Enabled && _session.Running)
             return;
 
+        var generation = Volatile.Read(ref _lifecycleGeneration);
+        if (MainThread.IsMainThread)
+        {
+            // session setup and StartRunning wait for the system camera daemon (Apple: never on the main thread);
+            // the UI froze for it on every start, and for 9 s when the daemon crashed meanwhile
+            Task.Run(() => StartCore(generation));
+            return;
+        }
+
+        StartCore(generation);
+    }
+
+    private void StartCore(int generation)
+    {
         lock (lockSetup)
         {
+            if (generation != Volatile.Read(ref _lifecycleGeneration))
+                return; // stopped meanwhile
+
+            if (State == CameraProcessorState.Enabled && _session.Running)
+                return;
+
             try
             {
                 Setup();
 
                 _session.StartRunning();
+
+                if (generation != Volatile.Read(ref _lifecycleGeneration))
+                {
+                    // stopped while the session was starting
+                    _session.StopRunning();
+                    State = CameraProcessorState.None;
+                    return;
+                }
+
                 State = CameraProcessorState.Enabled;
 
                 // Apply current flash modes after session starts
@@ -1529,6 +1561,8 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
     public void Stop(bool force = false)
     {
+        Interlocked.Increment(ref _lifecycleGeneration);
+
         // Stop frame processing thread first
         StopFrameProcessingThread();
 

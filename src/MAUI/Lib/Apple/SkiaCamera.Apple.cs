@@ -3649,7 +3649,7 @@ public partial class SkiaCamera
                 (CoreMedia.CMAudioFormatDescription)formatDesc,
                 (int)numSamples,
                 new[] { timing },
-                new nuint[] { (nuint)sample.Data.Length },
+                new nuint[] { (nuint)bytesPerFrame }, // each PCM frame's size, not the whole buffer's
                 out var sbErr);
 
             return cmSampleBuffer;

@@ -208,8 +208,8 @@ namespace DrawnUi.Camera
                 var timing = new CMSampleTimingInfo { PresentationTimeStamp = presentationTime, Duration = CMTime.Invalid, DecodeTimeStamp = CMTime.Invalid };
 
                 CMSampleBufferError sbErr;
-                // Use calculated numSamples instead of 1
-                var sampleBuffer = CMSampleBuffer.CreateReady(blockBuffer, _audioFormatDescription, (int)numSamples, new[] { timing }, new nuint[] { (nuint)sample.Data.Length }, out sbErr);
+                // one PCM frame per sample: the size given is each frame's, not the whole buffer's
+                var sampleBuffer = CMSampleBuffer.CreateReady(blockBuffer, _audioFormatDescription, (int)numSamples, new[] { timing }, new nuint[] { (nuint)bytesPerFrame }, out sbErr);
 
                 if (sbErr != CMSampleBufferError.None) return null;
 

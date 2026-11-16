@@ -36,6 +36,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
    * forms that follow the on-screen keyboard: `AdaptToKeyboardAuto = true` on a `SkiaScroll`;
    * a long press opens the app's context menu on phones and tablets too, after 0.75 s by default;
    * Mac Catalyst: frames follow the screen's refresh, with less CPU spent between frames.
+ * Android pre-recording: every new buffer starts empty, and keyframes are found in the encoder's own stream format, so the clip always opens on a keyframe.
  * Pictures with EXIF orientation 5 or 7 (rotated and mirrored) turn the right way in `CapturedImage`.
  * A capture or video format without a size yet describes its aspect ratio as `0:0`.
  * `DrawnUi.Net.Camera` is built on DrawnUi.Net 1.10.9.1.

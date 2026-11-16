@@ -625,6 +625,7 @@ public class PrerecordingEncodedBuffer : IDisposable
             _stateA = new BufferState { BytesUsed = 0, FrameCount = 0, StartTime = DateTime.UtcNow };
             _stateB = new BufferState { BytesUsed = 0, FrameCount = 0, StartTime = DateTime.MinValue };
             _currentBuffer = 0;
+            _frames.Clear(); // the frames point into the cleared buffers
         }
     }
 
@@ -653,6 +654,21 @@ public class PrerecordingEncodedBuffer : IDisposable
     {
         if (nalUnits == null || size < 5)
             return false;
+
+        // Annex-B (start codes, what Android's MediaCodec emits): any NAL after a 00 00 01 start code
+        if (nalUnits[0] == 0 && nalUnits[1] == 0 && (nalUnits[2] == 1 || (nalUnits[2] == 0 && nalUnits[3] == 1)))
+        {
+            for (int i = 0; i + 3 < size; i++)
+            {
+                if (nalUnits[i] == 0 && nalUnits[i + 1] == 0 && nalUnits[i + 2] == 1)
+                {
+                    if ((nalUnits[i + 3] & 0x1F) == 5)
+                        return true;
+                    i += 2;
+                }
+            }
+            return false;
+        }
 
         // H.264 NAL units: scan for IDR NAL unit (type 5)
         // Format: 4-byte length + 1-byte NAL header + payload

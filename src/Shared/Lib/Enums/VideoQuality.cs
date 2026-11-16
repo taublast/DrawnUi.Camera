@@ -6,22 +6,22 @@ namespace DrawnUi.Camera;
 public enum VideoQuality
 {
     /// <summary>
-    /// Low quality (480p @ 30fps)
+    /// Low quality (480p, 30 fps)
     /// </summary>
     Low,
     
     /// <summary>
-    /// Standard quality (720p @ 30fps)  
+    /// Standard quality (720p, 30 fps)
     /// </summary>
     Standard,
     
     /// <summary>
-    /// High quality (1080p @ 30fps)
+    /// High quality (1080p; 30 fps on iOS / Mac Catalyst, 60 fps on Android and Windows, by design)
     /// </summary>
     High,
     
     /// <summary>
-    /// Ultra quality (1080p @ 60fps or 4K @ 30fps)
+    /// Ultra quality (4K where available, up to 60 fps)
     /// </summary>
     Ultra,
     

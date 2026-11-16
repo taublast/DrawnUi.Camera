@@ -32,11 +32,13 @@ private void OnRecordingProgress(object sender, TimeSpan duration)
 ## Video Quality Presets
 
 ```csharp
-camera.VideoQuality = VideoQuality.Low;       // 720p, smaller files
-camera.VideoQuality = VideoQuality.Standard;  // 1080p, balanced
-camera.VideoQuality = VideoQuality.High;      // 1080p, higher bitrate
-camera.VideoQuality = VideoQuality.Ultra;     // 4K if available
+camera.VideoQuality = VideoQuality.Low;       // 480p 30 fps, smallest files
+camera.VideoQuality = VideoQuality.Standard;  // 720p 30 fps, balanced
+camera.VideoQuality = VideoQuality.High;      // 1080p: 30 fps on iOS / Mac Catalyst, 60 fps on Android and Windows
+camera.VideoQuality = VideoQuality.Ultra;     // 4K if available, up to 60 fps
 ```
+
+Frame rates are the target: each platform uses the closest rate the camera supports. The frame rate of `High` differs per platform on purpose: iOS keeps the native Camera app's 1080p at 30 fps, Android and Windows use 60 fps.
 
 ## Manual Video Format Selection
 

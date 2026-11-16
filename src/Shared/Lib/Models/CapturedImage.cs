@@ -136,12 +136,12 @@
                     return flipped;
                 }
 
-                case 5: // Rotate 90° CW + flip horizontal
+                case 5: // transpose: pixel (x, y) goes to (y, x)
                 {
                     var transformed = new SKBitmap(bitmap.Height, bitmap.Width);
                     using var canvas = new SKCanvas(transformed);
-                    canvas.Translate(transformed.Width, 0);
-                    canvas.RotateDegrees(90);
+                    canvas.Translate(0, transformed.Height);
+                    canvas.RotateDegrees(270);
                     canvas.Scale(-1, 1, bitmap.Width / 2.0f, bitmap.Height / 2.0f);
                     canvas.DrawBitmap(bitmap, 0, 0);
                     return transformed;
@@ -157,12 +157,12 @@
                     return rotated;
                 }
 
-                case 7: // Rotate 90° CCW + flip horizontal
+                case 7: // transverse: pixel (x, y) goes to (height - y, width - x)
                 {
                     var transformed = new SKBitmap(bitmap.Height, bitmap.Width);
                     using var canvas = new SKCanvas(transformed);
-                    canvas.Translate(0, transformed.Height);
-                    canvas.RotateDegrees(270);
+                    canvas.Translate(transformed.Width, 0);
+                    canvas.RotateDegrees(90);
                     canvas.Scale(-1, 1, bitmap.Width / 2.0f, bitmap.Height / 2.0f);
                     canvas.DrawBitmap(bitmap, 0, 0);
                     return transformed;

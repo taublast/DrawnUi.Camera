@@ -51,6 +51,8 @@ public class VideoFormat
         {
             // Calculate GCD to simplify the ratio
             int gcd = CalculateGCD(Width, Height);
+            if (gcd == 0)
+                return $"{Width}:{Height}"; // no size yet
             int simplifiedWidth = Width / gcd;
             int simplifiedHeight = Height / gcd;
 

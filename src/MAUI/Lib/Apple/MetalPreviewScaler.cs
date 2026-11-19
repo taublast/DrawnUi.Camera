@@ -524,9 +524,13 @@ namespace DrawnUi.Camera
         /// the caller is expected to swap the sensor dims before passing them here.
         /// Returns null on failure.
         /// </summary>
+        /// <param name="completedEvent">Optional: signalled with <paramref name="completedValue"/> once the GPU has
+        /// finished this dispatch, so the caller knows when the input texture is no longer read.</param>
+        /// <param name="completedValue">The value <paramref name="completedEvent"/> gets when the dispatch completes.</param>
         public IMTLTexture DispatchScaleToRing(IMTLTexture inputTexture, int rotation, bool mirror,
             int outWidth, int outHeight,
-            float cropOriginX = 0f, float cropOriginY = 0f, float cropSizeX = 1f, float cropSizeY = 1f)
+            float cropOriginX = 0f, float cropOriginY = 0f, float cropSizeX = 1f, float cropSizeY = 1f,
+            IMTLSharedEvent completedEvent = null, ulong completedValue = 0)
         {
             if (!_isInitialized || inputTexture == null || outWidth <= 0 || outHeight <= 0)
                 return null;
@@ -592,6 +596,9 @@ namespace DrawnUi.Camera
                 computeEncoder.DispatchThreadgroups(threadGroups, threadGroupSize);
                 computeEncoder.EndEncoding();
 
+                if (completedEvent != null)
+                    commandBuffer.EncodeSignal(completedEvent, completedValue);
+
                 // Commit and let Metal schedule the write. No WaitUntilCompleted here —
                 // when Skia later reads this texture via SKImage.FromTexture, Metal's
                 // per-resource hazard tracking serializes the read after this write.
@@ -604,6 +611,27 @@ namespace DrawnUi.Camera
             {
                 System.Diagnostics.Debug.WriteLine($"[MetalPreviewScaler] DispatchScaleToRing error: {ex.Message}");
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Signals <paramref name="completedEvent"/> with <paramref name="value"/> after everything already committed on
+        /// this scaler's queue, for a ticket whose dispatch did not run. Allocates a command buffer: failure path only.
+        /// </summary>
+        public bool SignalAfterQueued(IMTLSharedEvent completedEvent, ulong value)
+        {
+            if (_commandQueue == null || completedEvent == null)
+                return false;
+            try
+            {
+                using var commandBuffer = _commandQueue.CommandBuffer();
+                commandBuffer.EncodeSignal(completedEvent, value);
+                commandBuffer.Commit();
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 

@@ -464,17 +464,66 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     private CVMetalTextureCache _previewTextureCache;
     private IMTLTexture _previewTexture;  // Created ONCE, accessed from preview thread
 
-    /// <summary>The camera buffer <see cref="_previewTexture"/> wraps; another one in a frame means wrap again.</summary>
+    /// <summary>The camera buffer <see cref="_previewTexture"/> wraps; another one in a frame means wrap again (Mac only).</summary>
     private IntPtr _previewTextureBuffer;
 
-    /// <summary>
-    /// The wrappers of the current and the previous preview texture, kept alive so the IOSurface stays valid while the
-    /// preview thread may still be reading the previous texture after a re-wrap.
-    /// </summary>
-    private CVMetalTexture _previewCvTexture, _previewCvTexturePrevious;
+    /// <summary>The wrapper of the current preview texture on a Mac; replaced wrappers go to <see cref="_retiredCvTextures"/>.</summary>
+    private CVMetalTexture _previewCvTexture;
 
-    /// <summary>The texture of <see cref="_previewCvTexturePrevious"/>, released with it.</summary>
-    private IMTLTexture _previewTexturePrevious;
+    /// <summary>
+    /// Mac re-wrap bookkeeping. A replaced wrapper still backs the texture a preview dispatch may be reading, so it is
+    /// released only once the GPU has completed every dispatch that could have used it: the preview thread takes a
+    /// ticket under <see cref="_lockPreviewTexture"/> together with the texture, its dispatch signals
+    /// <see cref="_gpuDoneEvent"/> with that ticket, and a wrapper retired at ticket N goes when the event reaches N.
+    /// The list is preallocated: no allocation per frame.
+    /// </summary>
+    private readonly List<(CVMetalTexture Wrapper, ulong Fence)> _retiredCvTextures = new(16);
+    private IMTLSharedEvent _gpuDoneEvent;
+    private ulong _gpuTicket;
+
+    /// <summary>Releases the retired wrappers the GPU is done with; camera thread.</summary>
+    private void ReleaseRetiredCvTextures()
+    {
+        if (_retiredCvTextures.Count == 0)
+            return;
+
+        var done = _gpuDoneEvent?.SignaledValue ?? ulong.MaxValue;
+        var released = false;
+        for (int i = _retiredCvTextures.Count - 1; i >= 0; i--)
+        {
+            if (_retiredCvTextures[i].Fence <= done)
+            {
+                _retiredCvTextures[i].Wrapper.Dispose();
+                _retiredCvTextures.RemoveAt(i);
+                released = true;
+            }
+        }
+        if (released)
+            _previewTextureCache?.Flush(CVOptionFlags.None);
+    }
+
+    /// <summary>
+    /// Running on a Mac (Mac Catalyst, or the iPhone app on an Apple silicon Mac): the camera there takes a wrapped buffer
+    /// out of its pool, so the preview is wrapped again whenever a frame comes in another buffer. Elsewhere the single
+    /// wrap stays, unchanged: an iPhone hands changing buffers too, and wrapping each one (1.10.9.13) crashed it.
+    /// </summary>
+    private static readonly bool RewrapOnBufferChange = IsRunningOnMac();
+
+    static bool IsRunningOnMac()
+    {
+#if MACCATALYST
+        return true;
+#else
+        try
+        {
+            return OperatingSystem.IsIOSVersionAtLeast(14) && NSProcessInfo.ProcessInfo.IsiOSApplicationOnMac;
+        }
+        catch
+        {
+            return false;
+        }
+#endif
+    }
 
     [System.Runtime.InteropServices.DllImport("/System/Library/Frameworks/CoreMedia.framework/CoreMedia")]
     static extern IntPtr CMSampleBufferGetImageBuffer(IntPtr sbuf);
@@ -3095,7 +3144,7 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             // later frame in another one, so a texture wrapped from frame 1 froze the preview on that black frame
             // until a restart happened to start on the reused buffer (Mac Catalyst, 2026-11-19). The buffer is
             // compared by handle, no allocation per frame; another one is wrapped again.
-            var frameBuffer = sampleBuffer.Handle != IntPtr.Zero ? CMSampleBufferGetImageBuffer(sampleBuffer.Handle) : IntPtr.Zero;
+            var frameBuffer = RewrapOnBufferChange && sampleBuffer.Handle != IntPtr.Zero ? CMSampleBufferGetImageBuffer(sampleBuffer.Handle) : IntPtr.Zero;
             if (_previewTexture == null //our lill trick we wrap (create _previewTexture) only once, then camera writes directly to it
                 || frameBuffer != IntPtr.Zero && frameBuffer != _previewTextureBuffer)
             {
@@ -3116,6 +3165,11 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                             System.Diagnostics.Debug.WriteLine("[NativeCameraiOS] No Metal device!");
                             return;
                         }
+                    }
+
+                    if (RewrapOnBufferChange && _gpuDoneEvent == null)
+                    {
+                        _gpuDoneEvent = _metalDevice.CreateSharedEvent();
                     }
 
                     if (_previewTextureCache == null)
@@ -3145,28 +3199,26 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                         return;
                     }
 
-                    IMTLTexture replacedTexture;
+                    ulong retireFence = 0;
                     lock (_lockPreviewTexture)
                     {
-                        replacedTexture = _previewTexture;
                         _previewTexture = cvTexture.Texture;
                         _previewTextureWidth = (int)width;
                         _previewTextureHeight = (int)height;
+                        retireFence = _gpuTicket; // every reader that could hold the replaced texture has a ticket <= this
                     }
-                    _previewTextureBuffer = frameBuffer;
-                    if (_previewCvTexturePrevious != null)
+                    if (RewrapOnBufferChange)
                     {
-                        // A wrapped buffer stays out of the camera's pool while the wrapper, its texture or the
-                        // cache hold it, and the Mac then hands each frame in yet another buffer: released here
-                        // two wraps late (the preview thread and the encoder only ever read the current one),
-                        // not at GC, or the pool runs dry and the frames stop (measured: after 12 frames).
-                        _previewTexturePrevious?.Dispose();
-                        _previewCvTexturePrevious.Dispose();
-                        _previewTextureCache.Flush(CVOptionFlags.None);
+                        // A wrapped buffer stays out of the camera's pool while its wrapper or the cache hold it, so
+                        // replaced wrappers are released as soon as the GPU is done with them, not at GC, or the pool
+                        // runs dry and the frames stop (Mac, measured: after 12 frames). Never the texture object:
+                        // a texture disposed under a running dispatch aborts the app (1.10.9.13 on an iPhone).
+                        _previewTextureBuffer = frameBuffer;
+                        if (_previewCvTexture != null)
+                            _retiredCvTextures.Add((_previewCvTexture, retireFence));
+                        _previewCvTexture = cvTexture;
+                        ReleaseRetiredCvTextures();
                     }
-                    _previewCvTexturePrevious = _previewCvTexture;
-                    _previewTexturePrevious = replacedTexture;
-                    _previewCvTexture = cvTexture;
                     // NOTE: cvTexture (CVMetalTexture wrapper) is intentionally NOT disposed here.
                     // The CVMetalTextureRef must stay alive to keep the IMTLTexture's IOSurface
                     // backing valid. This is a one-time allocation (first frame only), not per-frame.
@@ -3184,10 +3236,13 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 finally
                 {
                     pixelBuffer.Unlock(CVPixelBufferLock.None);
-                    // GetImageBuffer() wraps with a retain of its own (owns: false); the texture keeps the buffer
-                    // now, and a wrapper left to GC holds a re-wrapped buffer out of the camera's pool
-                    pixelBuffer.Dispose();
-                    pixelBuffer = null;
+                    if (RewrapOnBufferChange)
+                    {
+                        // GetImageBuffer() wraps with a retain of its own (owns: false); the texture keeps the buffer
+                        // now, and a wrapper left to GC holds a re-wrapped buffer out of the camera's pool
+                        pixelBuffer.Dispose();
+                        pixelBuffer = null;
+                    }
                 }
             }
             else
@@ -3388,7 +3443,24 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 IMTLTexture outTex = null;
                 if (_metalScaler != null && _metalScaler.IsInitialized)
                 {
-                    outTex = _metalScaler.DispatchScaleToRing(texture, rotDegForDispatch, selfieMirror, outW, outH);
+                    if (RewrapOnBufferChange && _gpuDoneEvent != null)
+                    {
+                        // the texture is taken again with its ticket, under the lock the camera thread swaps it under
+                        ulong ticket;
+                        lock (_lockPreviewTexture)
+                        {
+                            texture = _previewTexture ?? texture;
+                            ticket = ++_gpuTicket;
+                        }
+                        outTex = _metalScaler.DispatchScaleToRing(texture, rotDegForDispatch, selfieMirror, outW, outH,
+                            completedEvent: _gpuDoneEvent, completedValue: ticket);
+                        if (outTex == null)
+                            _metalScaler.SignalAfterQueued(_gpuDoneEvent, ticket); // nothing was dispatched for it
+                    }
+                    else
+                    {
+                        outTex = _metalScaler.DispatchScaleToRing(texture, rotDegForDispatch, selfieMirror, outW, outH);
+                    }
                 }
 
                 // Update camera metadata occasionally

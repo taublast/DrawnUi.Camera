@@ -464,6 +464,21 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
     private CVMetalTextureCache _previewTextureCache;
     private IMTLTexture _previewTexture;  // Created ONCE, accessed from preview thread
 
+    /// <summary>The camera buffer <see cref="_previewTexture"/> wraps; another one in a frame means wrap again.</summary>
+    private IntPtr _previewTextureBuffer;
+
+    /// <summary>
+    /// The wrappers of the current and the previous preview texture, kept alive so the IOSurface stays valid while the
+    /// preview thread may still be reading the previous texture after a re-wrap.
+    /// </summary>
+    private CVMetalTexture _previewCvTexture, _previewCvTexturePrevious;
+
+    /// <summary>The texture of <see cref="_previewCvTexturePrevious"/>, released with it.</summary>
+    private IMTLTexture _previewTexturePrevious;
+
+    [System.Runtime.InteropServices.DllImport("/System/Library/Frameworks/CoreMedia.framework/CoreMedia")]
+    static extern IntPtr CMSampleBufferGetImageBuffer(IntPtr sbuf);
+
     public IMTLTexture PreviewTexture
     {
         get
@@ -3075,7 +3090,14 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
             // Create Metal texture ONCE, then do NOTHING!
             // The texture auto-updates because camera reuses IOSurface pool.
             // ============================================================
-            if (_previewTexture == null) //our lill trick we wrap (create _previewTexture) only once, then camera writes directly to it
+            // The camera keeps writing into the buffer that was wrapped, so the wrap is made once. Not on every
+            // camera: the Mac's FaceTime HD camera hands its first frame in a buffer of its own (black) and every
+            // later frame in another one, so a texture wrapped from frame 1 froze the preview on that black frame
+            // until a restart happened to start on the reused buffer (Mac Catalyst, 2026-11-19). The buffer is
+            // compared by handle, no allocation per frame; another one is wrapped again.
+            var frameBuffer = sampleBuffer.Handle != IntPtr.Zero ? CMSampleBufferGetImageBuffer(sampleBuffer.Handle) : IntPtr.Zero;
+            if (_previewTexture == null //our lill trick we wrap (create _previewTexture) only once, then camera writes directly to it
+                || frameBuffer != IntPtr.Zero && frameBuffer != _previewTextureBuffer)
             {
                 // FIRST FRAME ONLY: Create texture cache and texture
                 pixelBuffer = sampleBuffer.GetImageBuffer() as CVPixelBuffer;
@@ -3123,12 +3145,28 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                         return;
                     }
 
+                    IMTLTexture replacedTexture;
                     lock (_lockPreviewTexture)
                     {
+                        replacedTexture = _previewTexture;
                         _previewTexture = cvTexture.Texture;
                         _previewTextureWidth = (int)width;
                         _previewTextureHeight = (int)height;
                     }
+                    _previewTextureBuffer = frameBuffer;
+                    if (_previewCvTexturePrevious != null)
+                    {
+                        // A wrapped buffer stays out of the camera's pool while the wrapper, its texture or the
+                        // cache hold it, and the Mac then hands each frame in yet another buffer: released here
+                        // two wraps late (the preview thread and the encoder only ever read the current one),
+                        // not at GC, or the pool runs dry and the frames stop (measured: after 12 frames).
+                        _previewTexturePrevious?.Dispose();
+                        _previewCvTexturePrevious.Dispose();
+                        _previewTextureCache.Flush(CVOptionFlags.None);
+                    }
+                    _previewCvTexturePrevious = _previewCvTexture;
+                    _previewTexturePrevious = replacedTexture;
+                    _previewCvTexture = cvTexture;
                     // NOTE: cvTexture (CVMetalTexture wrapper) is intentionally NOT disposed here.
                     // The CVMetalTextureRef must stay alive to keep the IMTLTexture's IOSurface
                     // backing valid. This is a one-time allocation (first frame only), not per-frame.
@@ -3146,6 +3184,10 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
                 finally
                 {
                     pixelBuffer.Unlock(CVPixelBufferLock.None);
+                    // GetImageBuffer() wraps with a retain of its own (owns: false); the texture keeps the buffer
+                    // now, and a wrapper left to GC holds a re-wrapped buffer out of the camera's pool
+                    pixelBuffer.Dispose();
+                    pixelBuffer = null;
                 }
             }
             else

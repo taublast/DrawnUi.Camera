@@ -3611,9 +3611,56 @@ public partial class NativeCamera : NSObject, IDisposable, INativeCamera, INotif
 
     public void UpdateOrientationFromMainThread()
     {
-        _uiOrientation = UIApplication.SharedApplication.StatusBarOrientation;
+        _uiOrientation = GetInterfaceOrientation();
         _deviceOrientation = UIDevice.CurrentDevice.Orientation;
         UpdateDetectOrientation();
+    }
+
+    /// <summary>
+    /// The app's interface orientation, read from the foreground UIWindowScene (the first window
+    /// scene when none is foreground active). iOS 27 answers Unknown from
+    /// UIApplication.StatusBarOrientation in scene-based apps, which sent GetRotation to its
+    /// default (0) and turned the preview sideways; the status bar is now the fallback only when
+    /// no window scene answers. UIKit: call on the main thread only, callers off it use the
+    /// cached <see cref="_uiOrientation"/>.
+    /// </summary>
+    static UIInterfaceOrientation GetInterfaceOrientation()
+    {
+        try
+        {
+            if (OperatingSystem.IsIOSVersionAtLeast(13) || OperatingSystem.IsMacCatalystVersionAtLeast(13))
+            {
+                UIWindowScene scene = null;
+                foreach (var connected in UIApplication.SharedApplication.ConnectedScenes)
+                {
+                    if (connected is UIWindowScene windowScene)
+                    {
+                        if (windowScene.ActivationState == UISceneActivationState.ForegroundActive)
+                        {
+                            scene = windowScene;
+                            break;
+                        }
+                        scene ??= windowScene;
+                    }
+                }
+
+                if (scene != null)
+                {
+                    var orientation = OperatingSystem.IsIOSVersionAtLeast(16) || OperatingSystem.IsMacCatalystVersionAtLeast(16)
+                        ? scene.EffectiveGeometry.InterfaceOrientation
+                        : scene.InterfaceOrientation;
+
+                    if (orientation != UIInterfaceOrientation.Unknown)
+                        return orientation;
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.WriteLine($"[NativeCameraiOS] GetInterfaceOrientation: {e.Message}");
+        }
+
+        return UIApplication.SharedApplication.StatusBarOrientation;
     }
 
     public void UpdateDetectOrientation()

@@ -28,8 +28,9 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.9.12
+## What's New  1.10.9.13
 
+ * Mac: the camera preview is live from the first frame.
  * Fixed camera orientation on iOS 27: preview, photos and videos come out upright.
  * Built on DrawnUi 1.10.9.1, the version follows DrawnUi's. Camera apps get with it:
    * crash and memory leak fixes;

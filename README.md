@@ -28,8 +28,9 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.9.11
+## What's New  1.10.9.12
 
+ * Fixed camera orientation on iOS 27: preview, photos and videos come out upright.
  * Built on DrawnUi 1.10.9.1, the version follows DrawnUi's. Camera apps get with it:
    * crash and memory leak fixes;
    * much lower memory for pictures: images that show the same file share one decoded copy, and the image cache stays within `SkiaImageManager.CacheBudgetMb` (128 MB by default). Code that disposes or edits bitmaps it gets from `SkiaImageManager` sets `SkiaImageManager.ReuseBitmaps = false`;

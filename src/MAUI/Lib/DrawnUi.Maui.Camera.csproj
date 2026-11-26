@@ -16,6 +16,8 @@
       <ImplicitUsings>enable</ImplicitUsings>
 
       <UseSource>false</UseSource>
+      <!-- DrawnUi checkout used with UseSource=true; the .NET 11 work lives in a DrawnUi-net11 worktree -->
+      <DrawnUiSourceDir Condition="'$(DrawnUiSourceDir)' == ''">$(MSBuildThisFileDirectory)..\..\..\..\DrawnUi</DrawnUiSourceDir>
 
       <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
       <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">12.2</SupportedOSPlatformVersion>
@@ -111,7 +113,7 @@
   </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' == 'true'">
-      <ProjectReference Include="..\..\..\..\DrawnUi\src\Maui\DrawnUi\DrawnUi.Maui.csproj" />
+      <ProjectReference Include="$(DrawnUiSourceDir)\src\Maui\DrawnUi\DrawnUi.Maui.csproj" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' != 'true'">

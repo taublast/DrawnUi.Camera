@@ -10,6 +10,8 @@
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
 
       <UseSource>false</UseSource>
+      <!-- DrawnUi checkout used with UseSource=true; the .NET 11 work lives in a DrawnUi-net11 worktree -->
+      <DrawnUiSourceDir Condition="'$(DrawnUiSourceDir)' == ''">$(MSBuildThisFileDirectory)..\..\..\..\DrawnUi</DrawnUiSourceDir>
 
     </PropertyGroup>
 
@@ -44,7 +46,7 @@
     </ItemGroup>
  
     <ItemGroup Condition="'$(UseSource)' == 'true'">
-      <ProjectReference Include="..\..\..\..\DrawnUi\src\Net\DrawnUi\DrawnUi.Net.csproj" />
+      <ProjectReference Include="$(DrawnUiSourceDir)\src\Net\DrawnUi\DrawnUi.Net.csproj" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' != 'true'">

@@ -1886,8 +1886,25 @@ public partial class SkiaCamera : SkiaControl
             }
         }
 
-        StopAll();
+        // every camera stops, as StopAll does (after a frame, on the main thread), except one started again meanwhile:
+        // a resume that comes within a few ms (the end of a permission dialog) restarts the camera before this stop
+        // would run, and the stop must not kill that new start
+        var cameras = Instances.Select(x => (Camera: x, Generation: Volatile.Read(ref x._startGeneration))).ToArray();
+        Tasks.StartDelayed(TimeSpan.FromMilliseconds(16), () =>
+        {
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                foreach (var (camera, generation) in cameras)
+                {
+                    if (Volatile.Read(ref camera._startGeneration) == generation)
+                        camera.StopInternal(true);
+                }
+            });
+        });
     }
+
+    // bumped by every start: a background stop scheduled before it is dropped
+    int _startGeneration;
 
     // a start that came while the app was hidden: 1 = the whole start (permission check included), 2 = the hardware
     // (permissions already granted)
@@ -2118,6 +2135,8 @@ public partial class SkiaCamera : SkiaControl
     {
         if (IsDisposing || IsDisposed)
             return;
+
+        Interlocked.Increment(ref _startGeneration);
 
 #if ONPLATFORM
         if (_mockBitmap != null)

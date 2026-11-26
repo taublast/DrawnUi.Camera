@@ -1889,8 +1889,54 @@ public partial class SkiaCamera : SkiaControl
         StopAll();
     }
 
+    // a start that came while the app was hidden: 1 = the whole start (permission check included), 2 = the hardware
+    // (permissions already granted)
+    int _startOnResume;
+
+    void ObserveAppLifecycle()
+    {
+        Super.OnNativeAppResumed -= Super_OnNativeAppResumed;
+        Super.OnNativeAppPaused -= Super_OnNativeAppPaused;
+        Super.OnNativeAppResumed += Super_OnNativeAppResumed;
+        Super.OnNativeAppPaused += Super_OnNativeAppPaused;
+#if IOS || MACCATALYST
+        ObserveAppEnteredBackground(true);
+#endif
+    }
+
+    /// <summary>
+    /// Never starts while the app is hidden: keeps the start for the resume. True when deferred.
+    /// </summary>
+    bool DeferStartWhileHidden(int kind)
+    {
+        if (!Super.InBackground)
+            return false;
+
+        ObserveAppLifecycle();
+        Volatile.Write(ref _startOnResume, kind);
+        // resumed between the check and the flag, and the resume handler did not take it: start now
+        if (!Super.InBackground && Interlocked.Exchange(ref _startOnResume, 0) != 0)
+            return false;
+
+        Debug.WriteLine("[SkiaCamera] Start deferred: app in background");
+        return true;
+    }
+
     private void Super_OnNativeAppResumed(object sender, EventArgs e)
     {
+        var deferred = Interlocked.Exchange(ref _startOnResume, 0);
+        if (deferred != 0)
+        {
+            if (IsOn)
+            {
+                if (deferred == 1)
+                    StartWithPermissionsInternal();
+                else
+                    StartInternal();
+            }
+            return;
+        }
+
 #if IOS || MACCATALYST
         if (_keptRunningWhileInactive)
         {
@@ -2006,16 +2052,16 @@ public partial class SkiaCamera : SkiaControl
     {
         lock (this)
         {
+            ClearInternalCache();
 
+            // never start while the app is hidden (a pending restart, IsOn set meanwhile): the start runs on resume
+            if (DeferStartWhileHidden(1))
+                return;
+
+            // pause / resume are followed only once the permissions are settled: the permission dialogs pause the
+            // app themselves (iOS and Android), and must not stop or restart the camera that asked for them
             Super.OnNativeAppResumed -= Super_OnNativeAppResumed;
             Super.OnNativeAppPaused -= Super_OnNativeAppPaused;
-            Super.OnNativeAppResumed += Super_OnNativeAppResumed;
-            Super.OnNativeAppPaused += Super_OnNativeAppPaused;
-#if IOS || MACCATALYST
-            ObserveAppEnteredBackground(true);
-#endif
-
-            ClearInternalCache();
 
             try
             {
@@ -2029,7 +2075,10 @@ public partial class SkiaCamera : SkiaControl
                         PermissionsWarning = false;
                         PermissionsError = false;
                         OnPermissionsResultChanged(true);
-                        StartInternal();
+                        ObserveAppLifecycle();
+                        // the last dialog may still be closing: the hardware starts on resume then
+                        if (!DeferStartWhileHidden(2))
+                            StartInternal();
                     },
                     () =>
                     {

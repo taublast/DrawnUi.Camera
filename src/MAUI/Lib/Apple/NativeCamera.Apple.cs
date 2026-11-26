@@ -17,7 +17,6 @@ using Foundation;
 using ImageIO;
 using IOSurface;
 using Metal;
-using Microsoft.Maui.Controls.Compatibility;
 using Microsoft.Maui.Media;
 using CoreLocation;
 using Photos;

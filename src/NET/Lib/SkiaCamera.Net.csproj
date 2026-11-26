@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+        <TargetFrameworks>net10.0</TargetFrameworks>
+        <TargetFrameworks Condition="'$(NETCoreSdkVersion)' != '' And $([MSBuild]::VersionGreaterThanOrEquals('$(NETCoreSdkVersion)', '11.0'))">net10.0;net11.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -17,7 +18,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-      <Version>1.10.9.11</Version>
+      <Version>1.11.0.1</Version>
       <Title>SkiaCamera for .NET</Title>
       <PackageId>DrawnUi.Net.Camera</PackageId>
       <Description>SkiaCamera engine for .NET</Description>
@@ -47,9 +48,14 @@
     </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' != 'true'">
-      <PackageReference Include="DrawnUi.Net" Version="1.10.9.1" />
+      <PackageReference Include="DrawnUi.Net" Version="1.11.0.1" />
     </ItemGroup>
 
     <Import Project="..\..\Shared\Lib\DrawnUi.Camera.Shared.projitems" Label="Shared" />
+
+    <!-- packed on the .NET 11 SDK (dev/global.json selects it), which makes the .NET 11 targets too -->
+    <Target Name="CameraPackNeedsNet11Sdk" BeforeTargets="GenerateNuspec" Condition="!$([MSBuild]::VersionGreaterThanOrEquals('$(NETCoreSdkVersion)', '11.0'))">
+      <Error Text="Pack $(MSBuildProjectName) with the .NET 11 SDK (run dev/makenugets.bat, where global.json selects it): SDK $(NETCoreSdkVersion) makes no net11 targets." />
+    </Target>
 
 </Project>

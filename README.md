@@ -21,6 +21,8 @@ Use as Camera or a standalone Audio recorder inside any MAUI app by wrapping wit
 - QR code and barcode detection in the live preview, passkey sign-in codes handed to the system (iOS)
 - Built-in permission handling
 
+**.NET 9 apps:** use the 1.10.9.14 camera packages, the last ones with .NET 9 targets. Version 1.11 and later target .NET 10 and .NET 11.
+
 Read the [blog article](https://taublast.github.io/posts/VideoRecording) about the sample app coming along with this repo.
 
 ---
@@ -28,8 +30,10 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.9.14
+## What's New  1.11.0.1
 
+ * .NET 11: `DrawnUi.Maui.Camera` targets net11.0 for Android, iOS, Mac Catalyst and Windows, and `DrawnUi.Net.Camera` targets net11.0, next to .NET 10.
+ * Built on DrawnUi 1.11.0.1. The packages target .NET 10 and .NET 11; .NET 9 apps keep the 1.10.9.14 camera packages.
  * Fixed a crash when the camera preview starts on iPhone and iPad.
  * Mac: the camera preview is live from the first frame.
  * Fixed camera orientation on iOS 27: preview, photos and videos come out upright.

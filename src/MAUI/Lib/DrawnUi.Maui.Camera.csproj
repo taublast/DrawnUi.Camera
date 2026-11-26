@@ -3,7 +3,10 @@
     <!--using Directory.Build.props-->
 
     <PropertyGroup>
-      <TargetFrameworks>net9.0;net9.0-android;net9.0-ios;net9.0-maccatalyst;net9.0-windows10.0.19041.0;net10.0;net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+      <!-- .NET 9 apps stay on the 1.10.9.x packages, the last ones with net9 targets -->
+      <TargetFrameworks>net10.0;net10.0-android;net10.0-ios;net10.0-maccatalyst;net10.0-windows10.0.19041.0</TargetFrameworks>
+      <!-- the .NET 11 SDK adds the .NET 11 targets -->
+      <TargetFrameworks Condition="'$(NETCoreSdkVersion)' != '' And $([MSBuild]::VersionGreaterThanOrEquals('$(NETCoreSdkVersion)', '11.0'))">$(TargetFrameworks);net11.0;net11.0-android;net11.0-ios;net11.0-maccatalyst;net11.0-windows10.0.19041.0</TargetFrameworks>
       <OutputType>Library</OutputType>
       <UseMaui>true</UseMaui>
       <Packable>true</Packable>
@@ -23,7 +26,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-      <Version>1.10.9.14</Version>
+      <Version>1.11.0.1</Version>
       <Title>DrawnUI Camera control for .NET MAUI rendered with SkiaSharp</Title>
       <PackageId>DrawnUi.Maui.Camera</PackageId>
       <Description>SkiaCamera control rendered with SkiaSharp and DrawnUI for .NET MAUI on Android, iOS, MacCatalyst and Windows</Description>
@@ -39,16 +42,15 @@
       <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     </PropertyGroup>
 
-    <!-- .NET 9 MAUI packages -->
-    <ItemGroup Condition="$(TargetFramework.StartsWith('net9.0'))">
-      <PackageReference Include="Microsoft.Maui.Controls" Version="9.0.120" />
-      <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="9.0.120" />
-    </ItemGroup>
-
     <!-- .NET 10 MAUI packages -->
     <ItemGroup Condition="$(TargetFramework.StartsWith('net10.0'))">
       <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.80" />
       <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="10.0.80" />
+    </ItemGroup>
+
+    <!-- .NET 11 MAUI packages: MAUI 11 has no Compatibility package -->
+    <ItemGroup Condition="$(TargetFramework.StartsWith('net11.0'))">
+      <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.10" />
     </ItemGroup>
 
     <PropertyGroup Condition="$(TargetFramework.Contains('windows')) == true Or $(TargetFramework.Contains('droid')) == true Or $(TargetFramework.Contains('ios')) == true Or $(TargetFramework.Contains('catalyst')) == true">
@@ -113,9 +115,14 @@
     </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' != 'true'">
-      <PackageReference Include="DrawnUi.Maui" Version="1.10.9.1" />
+      <PackageReference Include="DrawnUi.Maui" Version="1.11.0.1" />
     </ItemGroup>
 
     <Import Project="..\..\Shared\Lib\DrawnUi.Camera.Shared.projitems" Label="Shared" />
+
+    <!-- packed on the .NET 11 SDK (dev/global.json selects it), which makes the .NET 11 targets too -->
+    <Target Name="CameraPackNeedsNet11Sdk" BeforeTargets="GenerateNuspec" Condition="!$([MSBuild]::VersionGreaterThanOrEquals('$(NETCoreSdkVersion)', '11.0'))">
+      <Error Text="Pack $(MSBuildProjectName) with the .NET 11 SDK (run dev/makenugets.bat, where global.json selects it): SDK $(NETCoreSdkVersion) makes no net11 targets." />
+    </Target>
 
 </Project>

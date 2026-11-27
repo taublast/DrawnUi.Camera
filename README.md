@@ -28,8 +28,9 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 
 ![vlc_0Y0bMKzuHM](https://github.com/user-attachments/assets/21ced7c4-7a05-44bc-ad39-9cfb44c3a4b4)
 
-## What's New  1.10.9.14
+## What's New  1.10.9.15
 
+ * The preview comes up live right after the first-launch permission prompts, also when the app asks for the permissions itself before turning the camera on. The camera never starts while the app is in the background. After updating, check your app's first launch: delays or extra `IsOn` calls added around the permission prompts are no longer needed.
  * Fixed a crash when the camera preview starts on iPhone and iPad.
  * Mac: the camera preview is live from the first frame.
  * Fixed camera orientation on iOS 27: preview, photos and videos come out upright.

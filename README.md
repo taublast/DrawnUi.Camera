@@ -33,7 +33,7 @@ Read the [blog article](https://taublast.github.io/posts/VideoRecording) about t
 ## What's New  1.11.0.1
 
  * .NET 11: `DrawnUi.Maui.Camera` targets net11.0 for Android, iOS, Mac Catalyst and Windows, and `DrawnUi.Net.Camera` targets net11.0, next to .NET 10.
- * Built on DrawnUi 1.11.0.1. The packages target .NET 10 and .NET 11; .NET 9 apps keep the 1.10.9.14 camera packages.
+ * Built on DrawnUi 1.11.0.1. The packages target .NET 10 and .NET 11; .NET 9 apps keep the 1.10.9.15 camera packages.
  * Fixed a crash when the camera preview starts on iPhone and iPad.
  * Mac: the camera preview is live from the first frame.
  * Fixed camera orientation on iOS 27: preview, photos and videos come out upright.

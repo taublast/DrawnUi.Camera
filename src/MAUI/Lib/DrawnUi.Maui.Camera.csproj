@@ -30,7 +30,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-      <Version>1.11.0.1</Version>
+      <Version>1.11.0.1-pre1</Version>
       <Title>DrawnUI Camera control for .NET MAUI rendered with SkiaSharp</Title>
       <PackageId>DrawnUi.Maui.Camera</PackageId>
       <Description>SkiaCamera control rendered with SkiaSharp and DrawnUI for .NET MAUI on Android, iOS, MacCatalyst and Windows</Description>
@@ -119,7 +119,7 @@
     </ItemGroup>
 
     <ItemGroup Condition="'$(UseSource)' != 'true'">
-      <PackageReference Include="DrawnUi.Maui" Version="1.11.0.1" />
+      <PackageReference Include="DrawnUi.Maui" Version="1.11.0.1-pre1" />
     </ItemGroup>
 
     <Import Project="..\..\Shared\Lib\DrawnUi.Camera.Shared.projitems" Label="Shared" />

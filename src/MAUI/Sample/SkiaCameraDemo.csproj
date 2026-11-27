@@ -2,11 +2,8 @@
 
     <PropertyGroup>
 
-        <TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
-        <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
-        <!-- SampleNet11=true runs the sample on .NET 11 (.NET 11 SDK) -->
-        <TargetFrameworks Condition="'$(SampleNet11)' == 'true'">net11.0-android;net11.0-ios;net11.0-maccatalyst</TargetFrameworks>
-        <TargetFrameworks Condition="'$(SampleNet11)' == 'true' And $([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net11.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFrameworks>net11.0-android;net11.0-ios;net11.0-maccatalyst</TargetFrameworks>
+        <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net11.0-windows10.0.19041.0</TargetFrameworks>
         
         <ApplicationId>com.drawnui.cam</ApplicationId>
         <ApplicationIdGuid>330e66b0-efc2-4fde-9ac8-074d5c3299b3</ApplicationIdGuid>
@@ -32,9 +29,8 @@
 	<PropertyGroup>
         <WindowsPackageType>None</WindowsPackageType>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
-		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.2</SupportedOSPlatformVersion>
 		<!-- the .NET 11 Mac Catalyst SDK needs 17.0 at least -->
-		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst' And $(TargetFramework.StartsWith('net11.0'))">17.0</SupportedOSPlatformVersion>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">17.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
         <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.19041.0</SupportedOSPlatformVersion>
         <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.19041.0</TargetPlatformMinVersion>
@@ -68,18 +64,18 @@
   </PropertyGroup>
 
   
-  <PropertyGroup Condition="'$(TargetFramework)'=='net10.0-ios'">
+  <PropertyGroup Condition="'$(TargetFramework)'=='net11.0-ios'">
     <CodesignKey>Apple Development: Created via API (R2DBJ49UL4)</CodesignKey>
     <CodesignProvision>VS: WildCard Development</CodesignProvision>
   </PropertyGroup>
 
   
-  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-ios|AnyCPU'">
+  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net11.0-ios|AnyCPU'">
     <EnableSGenConc>True</EnableSGenConc>
   </PropertyGroup>
 
   
-  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-ios|AnyCPU'">
+  <PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net11.0-ios|AnyCPU'">
     <EnableSGenConc>True</EnableSGenConc>
   </PropertyGroup>
 
@@ -138,9 +134,7 @@
           <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
 
-        <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.80" Condition="$(TargetFramework.StartsWith('net10.0'))" />
-        <PackageReference Include="Microsoft.Maui.Controls.Compatibility" Version="10.0.80" Condition="$(TargetFramework.StartsWith('net10.0'))" />
-        <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.10" Condition="$(TargetFramework.StartsWith('net11.0'))" />
+        <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.10" />
         <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
 
   </ItemGroup>
